@@ -24,7 +24,9 @@ def _gh_upload(path: str, branch: str) -> str:
         sha = requests.get(f"{api}/git/ref/heads/{base}", headers=hd, timeout=30).json()["object"]["sha"]
         requests.post(f"{api}/git/refs", headers=hd, timeout=30,
                       json={"ref": f"refs/heads/{branch}", "sha": sha}).raise_for_status()
-    name = f"plumes/{os.path.basename(path)}"
+    # 檔名加上上傳時間，避免同一 CEMS 小時重複上傳時撞名（GitHub 不允許直接覆蓋同名檔而失敗）
+    base, ext = os.path.splitext(os.path.basename(path))
+    name = f"plumes/{base}_{int(time.time())}{ext}"
     with open(path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
     requests.put(f"{api}/contents/{name}", headers=hd, timeout=60,
