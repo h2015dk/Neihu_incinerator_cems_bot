@@ -81,7 +81,7 @@ map:
   # center 或 anchor 留空 → 改為依煙囪、敏感點、濃度範圍自動決定圖框
 
 wind:
-  source: moenv                  # moenv | cwa | auto（auto=兩者取最近）
+  source: auto                  # moenv | cwa | auto（auto=兩者取最近）
   fixed_station: ""              # 全部廠共用的指定測站；各廠 wind_station 優先
 
 line:
