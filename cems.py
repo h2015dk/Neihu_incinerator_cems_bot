@@ -33,19 +33,82 @@ def fetch_dataset(dataset: str, api_key: str, filters: str | None = None,
 
 
 def fetch_all_facilities(cfg: dict, facilities: list[dict]) -> dict[str, list[dict]]:
-    """全部設施共用一次抓取；回傳 {設施名稱: 該設施的資料列}。"""
+    """依序嘗試：①管制編號篩選 ②縣市篩選 ③抓全表。每一步都確認真的比對到該廠才採用，
+    避免伺服器端篩選語法失效（被忽略）時，只抓到別家資料就誤判為「沒有資料」。"""
     key = cfg["moenv_api_key"]
-    rows: list[dict] = []
-    if all(f.get("cno") for f in facilities):
-        try:  # 每廠都有管制編號 → 伺服器端篩選，資料量小
-            for f in facilities:
-                rows += fetch_dataset("aqx_p_187", key, filters=f"cno,EQ,{f['cno']}")
+    out: dict[str, list[dict]] = {}
+    pending = list(facilities)
+
+    def take(rows, label):
+        nonlocal pending
+        still = []
+        for f in pending:
+            m = [r for r in rows if _match(r, f)]
+            if m:
+                out[f["name"]] = m
+                log.info("%s：以%s取得 %d 筆", f["name"], label, len(m))
+            else:
+                still.append(f)
+        pending = still
+
+    for f in [f for f in pending if f.get("cno")]:
+        try:
+            take(fetch_dataset("aqx_p_187", key, filters=f"cno,EQ,{f['cno']}", max_rows=20000),
+                 "管制編號篩選")
         except Exception as e:  # noqa: BLE001
-            log.warning("伺服器端篩選失敗，改抓全表：%s", e)
-            rows = []
+            log.warning("管制編號篩選失敗：%s", e)
+    for county in sorted({f.get("epb_county") for f in pending if f.get("epb_county")}):
+        try:
+            take(fetch_dataset("aqx_p_187", key, filters=f"epb_county,EQ,{county}", max_rows=50000),
+                 "縣市篩選")
+        except Exception as e:  # noqa: BLE001
+            log.warning("縣市篩選失敗：%s", e)
+    if pending:
+        take(fetch_dataset("aqx_p_187", key, max_rows=400000), "全表")
+    for f in pending:
+        out[f["name"]] = []
+    return out
+
+
+def diagnose(cfg: dict, facilities: list[dict]) -> None:
+    """印出資料集實際內容，協助找出正確的管制編號與公司簡稱。"""
+    key = cfg["moenv_api_key"]
+    for f in facilities:
+        print(f"\n===== 診斷：{f['name']}（設定 cno={f.get('cno')!r}，關鍵字={f.get('abbr_keywords')}）=====")
+        if f.get("cno"):
+            try:
+                rows = fetch_dataset("aqx_p_187", key, filters=f"cno,EQ,{f['cno']}", max_rows=5000)
+                cnos = {r.get("cno") for r in rows}
+                print(f"① 管制編號篩選：回傳 {len(rows)} 筆，含管制編號 {len(cnos)} 種"
+                      + ("（篩選似乎沒有作用）" if len(cnos) > 1 else ""))
+                _summary(rows[:2000], f)
+            except Exception as e:  # noqa: BLE001
+                print("① 管制編號篩選錯誤：", e)
+        county = f.get("epb_county")
+        try:
+            rows = fetch_dataset("aqx_p_187", key, filters=f"epb_county,EQ,{county}", max_rows=50000)
+            print(f"② 縣市篩選（{county}）：回傳 {len(rows)} 筆")
+            _summary(rows, f)
+        except Exception as e:  # noqa: BLE001
+            print("② 縣市篩選錯誤：", e)
+
+
+def _summary(rows, f):
     if not rows:
-        rows = fetch_dataset("aqx_p_187", key)
-    return {f["name"]: [r for r in rows if _match(r, f)] for f in facilities}
+        print("   （沒有資料）")
+        return
+    times = sorted(str(r.get("m_time", "")) for r in rows)
+    print(f"   監測時間範圍：{times[0]} ～ {times[-1]}")
+    print(f"   欄位：{', '.join(rows[0].keys())}")
+    seen = {}
+    for r in rows:
+        seen.setdefault((r.get("cno"), r.get("abbr"), r.get("epb_county")), set()).add(r.get("polno"))
+    kws = [k for k in f.get("abbr_keywords", [])] + ["內湖", "焚化"]
+    hit = {k: v for k, v in seen.items() if any(w in str(k[1]) for w in kws)}
+    show = hit or dict(list(seen.items())[:30])
+    print("   " + ("名稱含關鍵字／焚化的設施：" if hit else "找不到含關鍵字的設施，列出前 30 家："))
+    for (cno, abbr, cty), pols in show.items():
+        print(f"   - cno={cno}  abbr={abbr}  縣市={cty}  煙囪={sorted(map(str, pols))}")
 
 
 def _match(r: dict, fac: dict) -> bool:
