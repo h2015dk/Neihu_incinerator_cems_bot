@@ -1,0 +1,18 @@
+title: 傍晚起爐、20 點後才結束（結束通知延到隔天 07:20）
+facility: neihu
+start: "2026-11-10 18:00"
+hours:
+  - {codes: [C], wd: 90, ws: 2.0}
+  - {codes: [C], wd: 90, ws: 2.0}
+  - {codes: [C], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}

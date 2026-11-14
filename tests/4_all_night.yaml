@@ -1,0 +1,14 @@
+title: 整段起爐都在夜間（不打擾，早上 07:20 補一則夜間紀錄）
+facility: neihu
+start: "2026-11-10 22:00"
+hours:
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [C], wd: 90, ws: 2.0}
+  - {codes: [C], wd: 90, ws: 2.0}
+  - {codes: [C], wd: 45, ws: 2.0}
+  - {codes: [N], wd: 45, ws: 2.0}
+  - {codes: [N], wd: 45, ws: 2.0}
+  - {codes: [N], wd: 45, ws: 2.0}
+  - {codes: [N], wd: 45, ws: 2.0}
+  - {codes: [N], wd: 45, ws: 2.0}
+  - {codes: [N], wd: 45, ws: 2.0}

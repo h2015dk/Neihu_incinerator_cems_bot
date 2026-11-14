@@ -1,0 +1,12 @@
+title: 白天起爐、起初不在下風，之後風向轉東（首則＋下風警告＋結束）
+facility: neihu
+start: "2026-11-10 09:00"
+hours:
+  - {codes: [C], wd: 0, ws: 2.5}
+  - {codes: [C], wd: 0, ws: 2.5}
+  - {codes: [C], wd: 20, ws: 2.0}
+  - {codes: [C], wd: 90, ws: 2.0}
+  - {codes: [C], wd: 95, ws: 2.0}
+  - {codes: [C], wd: 0, ws: 2.0}
+  - {codes: [C], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}

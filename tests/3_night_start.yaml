@@ -1,0 +1,10 @@
+title: 凌晨起爐延續到早上（07:20 補發首則，含夜間累積的下風時數）
+facility: neihu
+start: "2026-11-10 04:00"
+hours:
+  - {codes: [C], wd: 90, ws: 1.5}
+  - {codes: [C], wd: 90, ws: 1.5}
+  - {codes: [C], wd: 0, ws: 2.0}
+  - {codes: [C], wd: 0, ws: 2.5}
+  - {codes: [C], wd: 10, ws: 2.5}
+  - {codes: [N], wd: 10, ws: 2.5}
