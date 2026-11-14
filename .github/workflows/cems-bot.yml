@@ -6,7 +6,7 @@ on:
       mode:
         description: "執行模式"
         type: choice
-        options: [normal, dry-run, demo, force, force-group]
+        options: [normal, dry-run, demo, force, force-group, diagnose]
         default: normal
 
 permissions:
@@ -57,6 +57,7 @@ jobs:
             demo)    python bot.py --demo --maps ;;
             force)   python bot.py --force ;;
             force-group) python bot.py --force-group ;;
+            diagnose) python bot.py --diagnose ;;
             *)       python bot.py ;;
           esac
 
