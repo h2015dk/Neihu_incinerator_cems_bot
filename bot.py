@@ -66,7 +66,7 @@ def apply_env(cfg):
 def build_source(ev_list, fac, cfg):
     """同廠各管道合併成同一點源（等效直徑＝總截面積相同）。"""
     dx = cfg["dioxin"]
-    q_total, temps, flows = 0.0, [], []
+    q_total, temps, flows, measured = 0.0, [], [], False
     for ev in ev_list:
         if ev["startup"]:
             conc = dx["startup_conc_ng_iteq_nm3"]
@@ -76,7 +76,9 @@ def build_source(ev_list, fac, cfg):
             conc = dx.get("fault_conc_ng_iteq_nm3", dx["startup_conc_ng_iteq_nm3"])
         else:
             conc = dx["normal_conc_ng_iteq_nm3"]
-        f = cems.flow_to_nm3_s(ev["flow"]) or fac["default_flow_nm3_per_hr"] / 3600
+        f_cems = cems.flow_to_nm3_s(ev["flow"]) if ev.get("polno") != "P" else None
+        measured = measured or bool(f_cems)
+        f = f_cems or cems.flow_to_nm3_s(ev["flow"]) or fac["default_flow_nm3_per_hr"] / 3600
         q_total += conc * f                    # ng I-TEQ/s
         flows.append(f)
         temps.append(ev["temp_c"] or fac["default_exit_temp_c"])
@@ -84,6 +86,9 @@ def build_source(ev_list, fac, cfg):
     d_eq = fac["stack_diameter_m"] * math.sqrt(len(ev_list))
     q_act = sum(flows) * (ts + 273.15) / 273.15
     vs = q_act / (math.pi * d_eq ** 2 / 4)
+    # 沒有 CEMS 實測流率時，直接採用設定檔的出口流速（例如年均實測值）
+    if not measured and fac.get("default_exit_velocity_m_s"):
+        vs = fac["default_exit_velocity_m_s"]
     if not (1 <= vs <= 40):
         vs = fac["default_exit_velocity_m_s"]
     return plume.Source(q_g_s=q_total, hs=fac["stack_height_m"], d=d_eq, vs=vs, ts_c=ts), q_total
@@ -259,13 +264,18 @@ def step(fac, now, obs, wind, fc, st, cfg):
     pend.clear()
 
     # 3) 進行中的事件
+    low = wind and wind.get("consistency", 1) < cfg.get("wind", {}).get("low_consistency", 0.5)
+
+    def note(t):  # 合成風場各站差異大時加註
+        return t.replace(FOOT, "※ 各測站風向差異大，下風判斷可信度較低\n" + FOOT) if low else t
+
     if ev.get("active"):
         if not ev["start_sent"]:                       # 第一次發送
-            out.append((msg_event(fac, ev, now, sts, fc, cfg), n.get("attach_map", True)))
+            out.append((note(msg_event(fac, ev, now, sts, fc, cfg)), n.get("attach_map", True)))
             ev["start_sent"] = True
             ev["dw_sent"] = bool(prim_now)             # 第一次就在下風 → 之後不再警告
         elif not ev["dw_sent"] and prim_now:          # 第一次不在下風，之後轉為下風 → 再警告一次
-            out.append((msg_event(fac, ev, now, sts, fc, cfg, warning=True),
+            out.append((note(msg_event(fac, ev, now, sts, fc, cfg, warning=True)),
                         n.get("attach_map", True)))
             ev["dw_sent"] = True
     return out
@@ -295,9 +305,10 @@ def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True):
     return png, img, (line_push.upload_image(prev, cfg) if img else None)
 
 
-def fake_flue(t):
+def fake_flue(t, flow_nm3_hr=None):
     return {"polno": "P", "time": t, "ops": ["C"], "startup": True, "shutdown": False,
-            "fault": False, "flow": None, "temp_c": None}
+            "fault": False, "flow": (float(flow_nm3_hr), "Nm3/hr") if flow_nm3_hr else None,
+            "temp_c": None}
 
 
 # ======================== 正式執行 ========================
@@ -337,10 +348,14 @@ def run_live(cfg, args):
                  ",".join(obs["ops"]) or "-", "是" if obs["startup"] else "否",
                  "是" if ev.get("active") else "否")
         if wind:
-            log.info("%s 風向｜%s %s（距 %.1f km，%s）風從 %.0f° %.1f m/s｜%s：%s",
+            for s in wind.get("members", []):
+                log.info("%s 測站｜%s 距 %.1f km 風從 %.0f° %.1f m/s（%s）", fac["name"],
+                         s.get("site", s["name"]), s["dist_km"], s["wd"], s["ws"], s["time"])
+            log.info("%s 風向｜%s %s 風從 %.0f° %.1f m/s%s｜%s：%s",
                      fac["name"], wind.get("src_label", ""), wind.get("site", wind["name"]),
-                     wind["dist_km"], wind["time"], wind["wd"], wind["ws"], prim,
-                     {True: "在下風", False: "不在下風", None: "風速微弱無法判斷"}[dw])
+                     wind["wd"], wind["ws"],
+                     f"｜一致性 {wind['consistency']:.2f}" if "consistency" in wind else "",
+                     prim, {True: "在下風", False: "不在下風", None: "風速微弱無法判斷"}[dw])
         else:
             log.warning("%s：抓不到測站風向", fac["name"])
         log.info("%s 預報｜%s", fac["name"], f"取得 {len(fc)} 筆" if fc else "未取得（沒有 CWA_API_KEY 或解析失敗）")
@@ -357,7 +372,10 @@ def run_live(cfg, args):
         for text, attach in msgs:
             img = prev = None
             if attach and wind:
-                flues = [f for f in obs["flues"] if f["startup"]] or [fake_flue(obs["time"])]
+                if args.force:  # 測試：固定用設定檔的測試流率（未設定則用預設流率）
+                    flues = [fake_flue(obs["time"], fac.get("force_flow_nm3_per_hr"))]
+                else:
+                    flues = [f for f in obs["flues"] if f["startup"]] or [fake_flue(obs["time"])]
                 _, img, prev = render_map(fac, flues, wind, obs["time"], cfg,
                                           os.path.join(HERE, "out"), upload=not args.dry_run)
             line_push.push(cfg, text, img, prev, dry_run=args.dry_run,
@@ -439,6 +457,16 @@ def main():
 
     if args.diagnose:
         cems.diagnose(cfg, facilities_of(cfg))
+        stations = windmod.get_stations(cfg)
+        for fac in facilities_of(cfg):
+            print(f"\n===== 距 {fac['name']} 最近的測站（有風向風速資料者）=====")
+            near = sorted(stations, key=lambda s: windmod.haversine_km(
+                fac["stack_lat"], fac["stack_lon"], s["lat"], s["lon"]))[:6]
+            for s in near:
+                d = windmod.haversine_km(fac["stack_lat"], fac["stack_lon"], s["lat"], s["lon"])
+                print(f"   {s['name']:<14} 距 {d:5.2f} km｜座標 {s['lat']:.4f}, {s['lon']:.4f}"
+                      f"｜目前風從 {s['wd']:.0f}° {s['ws']:.1f} m/s（{s['time']}）")
+            print("   （程式自動採用第一個；要指定可在 config.yaml 該廠的 wind_station 填站名，如 \"汐止\"）")
         return
     if args.demo or args.scenario:
         import glob

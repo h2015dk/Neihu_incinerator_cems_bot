@@ -83,10 +83,42 @@ def get_stations(cfg: dict) -> list[dict]:
 
 
 def nearest_wind(stations: list[dict], fac: dict, cfg: dict) -> dict | None:
-    """fac 可設 wind_station 指定測站；否則用全域 wind.fixed_station；都沒有就找最近。"""
-    fixed = fac.get("wind_station") or cfg.get("wind", {}).get("fixed_station")
+    """取最近測站的風向風速。
+    - fac.wind_station 或 wind.fixed_station 有填 → 只用指定測站
+    - wind.n_nearest > 1 → 取最近 N 站（限 max_km 內）做向量合成"""
+    wcfg = cfg.get("wind", {})
+    lat0, lon0 = fac["stack_lat"], fac["stack_lon"]
+    fixed = fac.get("wind_station") or wcfg.get("fixed_station")
     cand = [s for s in stations if fixed and fixed in s["name"]] or stations
     if not cand:
         return None
-    best = min(cand, key=lambda s: haversine_km(fac["stack_lat"], fac["stack_lon"], s["lat"], s["lon"]))
-    return {**best, "dist_km": haversine_km(fac["stack_lat"], fac["stack_lon"], best["lat"], best["lon"])}
+    ranked = sorted(({**s, "dist_km": haversine_km(lat0, lon0, s["lat"], s["lon"])} for s in cand),
+                    key=lambda s: s["dist_km"])
+    n = 1 if fixed else int(wcfg.get("n_nearest", 1))
+    sel = [s for s in ranked if s["dist_km"] <= wcfg.get("max_km", 15)][:n] or ranked[:1]
+    if len(sel) == 1:
+        return sel[0]
+    return combine(sel, wcfg.get("weighting", "idw"))
+
+
+def combine(sel: list[dict], weighting: str = "idw") -> dict:
+    """風向以向量平均（考慮風速）合成，避免 350° 與 10° 平均成 180° 的錯誤；
+    風速取加權算術平均；一致性 R＝合成向量長度／平均風速（1＝各站風向完全一致）。"""
+    ws_ = [1 / max(s["dist_km"], 0.5) ** 2 if weighting == "idw" else 1.0 for s in sel]
+    W = sum(ws_)
+    u = sum(w * s["ws"] * math.sin(math.radians(s["wd"])) for w, s in zip(ws_, sel)) / W
+    v = sum(w * s["ws"] * math.cos(math.radians(s["wd"])) for w, s in zip(ws_, sel)) / W
+    ws_mean = sum(w * s["ws"] for w, s in zip(ws_, sel)) / W
+    wd = (math.degrees(math.atan2(u, v)) + 360) % 360
+    R = math.hypot(u, v) / ws_mean if ws_mean > 0 else 0.0
+    temps = [s["temp_c"] for s in sel if s.get("temp_c") is not None]
+    srcs = sorted({s.get("src_label", "") for s in sel})
+    how = "反距離平方加權" if weighting == "idw" else "等權重"
+    return {
+        "name": f"{len(sel)} 站合成", "src_label": "、".join(srcs) + f"（{len(sel)} 站{how}合成）",
+        "site": "、".join(f"{s.get('site', s['name'])} {s['dist_km']:.1f} km" for s in sel),
+        "lat": sel[0]["lat"], "lon": sel[0]["lon"], "dist_km": sel[0]["dist_km"],
+        "ws": ws_mean, "wd": wd, "temp_c": sum(temps) / len(temps) if temps else None,
+        "time": "、".join(sorted({str(s["time"]) for s in sel})), "consistency": R,
+        "members": sel, "weights": [w / W for w in ws_],
+    }

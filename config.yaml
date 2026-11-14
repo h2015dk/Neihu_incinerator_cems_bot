@@ -17,8 +17,9 @@ facilities:                # 可監控多座廠；不需要的整段刪掉即可
     stack_diameter_m: 1.25  # 【待核】
     default_exit_temp_c: 165.8666667  # 使用者提供2025年均值
     default_flow_nm3_per_hr: 38968.2  # 使用者提供2025年均值
-    default_exit_velocity_m_s: 13.77 # 使用者提供2025年均值
-    wind_station: ""
+    default_exit_velocity_m_s: 13.77 # 使用者提供2025年均值（無 CEMS 流率時直接採用）
+    force_flow_nm3_per_hr: 38968.2   # force／force-group 測試用流率（與預設流率相同，可省略）
+    wind_station: ""                 # 留空才會做多站合成
     forecast_town: 內湖區   # 風向預報取用的行政區
 
 receptors:                 # 敏感點：一定畫進擴散圖，並在 LINE 訊息列出估算濃度
@@ -79,10 +80,16 @@ map:
     x_frac: 0.10
     y_frac: 0.10
   # center 或 anchor 留空 → 改為依煙囪、敏感點、濃度範圍自動決定圖框
+  include_wind_stations: true    # 風向測站一定畫進圖內；在框外時以中心點等比例放大圖框
+                                 # （放大後 anchor 敏感點不再固定在 10%／10%，會往內移）
 
 wind:
-  source: auto                  # moenv | cwa | auto（auto=兩者取最近）
-  fixed_station: ""              # 全部廠共用的指定測站；各廠 wind_station 優先
+  source: auto                   # moenv | cwa | auto（auto=兩者一起比較；沒有 CWA_API_KEY 時只用環境部）
+  fixed_station: ""              # 全部廠共用的指定測站；各廠 wind_station 優先（有指定就不合成）
+  n_nearest: 3                   # 取最近幾站合成風向；1＝只用最近一站
+  weighting: idw                 # idw＝反距離平方加權（近的站權重大）｜equal＝等權重
+  max_km: 15                     # 只採用此距離內的測站
+  low_consistency: 0.5           # 各站風向一致性低於此值時，訊息加註「可信度較低」
 
 line:
   channel_access_token: "LINE Messaging API 的 Channel access token（long-lived）"
@@ -97,4 +104,3 @@ image_host:                      # LINE 圖片訊息只能用公開 HTTPS 網址
   static_base_url: ""            # 例如 https://your-server/plume
 
 state_file: state.json
-

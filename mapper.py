@@ -155,6 +155,19 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
             pts += [(float(MX[m].min()), float(MY[m].min())), (float(MX[m].max()), float(MY[m].max()))]
         fr = auto_frame(pts)
 
+    # 風向測站一定要在圖內：以圖框中心（環興公司）為準等比例放大，維持置中與長寬比
+    if wind and map_cfg.get("include_wind_stations", True):
+        cx, cy = (fr[0] + fr[1]) / 2, (fr[2] + fr[3]) / 2
+        hw, hh = (fr[1] - fr[0]) / 2, (fr[3] - fr[2]) / 2
+        pad = map_cfg.get("station_margin_frac", 0.08)  # 測站離框緣至少留 8%
+        k = 1.0
+        for st in wind.get("members") or [wind]:
+            px, py = (float(v) for v in to_merc(st["lon"], st["lat"]))
+            k = max(k, abs(px - cx) / (hw * (1 - pad)), abs(py - cy) / (hh * (1 - pad)))
+        if k > 1:
+            fr = (cx - hw * k, cx + hw * k, cy - hh * k, cy + hh * k)
+            log.info("為納入風向測站，圖框放大 %.2f 倍", k)
+
     w_m, h_m = fr[1] - fr[0], fr[3] - fr[2]
     fig_w = 10.0
     fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.82 * h_m / w_m + 1.0), dpi=110)
@@ -204,12 +217,17 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
             lab = f"{fac['name']}\n距{c0['name']} {dkm:.1f} km"
         edge_marker(ax, sx, sy, fr, lab)
 
-    # 測站
+    # 測站（合成風場時畫出每一站）
     if wind:
-        wx, wy = (float(v) for v in to_merc(wind["lon"], wind["lat"]))
-        if inside(wx, wy, fr):
-            ax.plot(wx, wy, marker="o", color="blue", ms=8, zorder=6, ls="none",
-                    label=f"{wind['name']}（距廠 {wind['dist_km']:.1f} km）")
+        first = True
+        for st in wind.get("members") or [wind]:
+            wx, wy = (float(v) for v in to_merc(st["lon"], st["lat"]))
+            if inside(wx, wy, fr):
+                ax.plot(wx, wy, marker="o", color="blue", ms=8, zorder=6, ls="none",
+                        label="風向測站" if first else None)
+                ax.annotate(st.get("site", st["name"]), (wx, wy), xytext=(6, -12),
+                            textcoords="offset points", fontsize=8, color="blue", zorder=6)
+                first = False
 
     # 敏感點
     for k, rp in enumerate(receptors):
@@ -234,12 +252,22 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
                     xytext=(0.88 - 0.05 * math.sin(to), 0.92 - 0.05 * math.cos(to)),
                     xycoords="axes fraction",
                     arrowprops=dict(arrowstyle="-|>", lw=2.5, color="blue"), zorder=8)
-        info = (f"風從 {wind['wd']:.0f}°（{compass(wind['wd'])}）來，{wind['ws']:.1f} m/s\n"
-                f"資料來源：{wind.get('src_label', '')}\n"
-                f"測站：{wind.get('site', wind['name'])}\n"
-                f"測站距焚化廠煙囪：{wind['dist_km']:.1f} km\n"
-                f"觀測時間：{wind['time']}")
-        ax.text(0.985, 0.845, info, transform=ax.transAxes, ha="right", va="top", fontsize=8,
+        if wind.get("members"):
+            sites = "\n".join(f"　{s.get('site', s['name'])}：距煙囪 {s['dist_km']:.1f} km，"
+                              f"風從 {s['wd']:.0f}° {s['ws']:.1f} m/s，權重 {w:.0%}"
+                              for s, w in zip(wind["members"], wind["weights"]))
+            info = (f"合成風：從 {wind['wd']:.0f}°（{compass(wind['wd'])}）來，{wind['ws']:.1f} m/s\n"
+                    f"資料來源：{wind.get('src_label', '')}\n"
+                    f"測站：\n{sites}\n"
+                    f"風向一致性：{wind['consistency']:.2f}（1＝各站完全一致）\n"
+                    f"觀測時間：{wind['time']}")
+        else:
+            info = (f"風從 {wind['wd']:.0f}°（{compass(wind['wd'])}）來，{wind['ws']:.1f} m/s\n"
+                    f"資料來源：{wind.get('src_label', '')}\n"
+                    f"測站：{wind.get('site', wind['name'])}\n"
+                    f"測站距焚化廠煙囪：{wind['dist_km']:.1f} km\n"
+                    f"觀測時間：{wind['time']}")
+        ax.text(0.985, 0.02, info, transform=ax.transAxes, ha="right", va="bottom", fontsize=8,
                 color="navy", zorder=8, linespacing=1.4, multialignment="left",
                 bbox=dict(fc="white", ec="navy", lw=0.6, alpha=0.88, boxstyle="round,pad=0.4"))
 
