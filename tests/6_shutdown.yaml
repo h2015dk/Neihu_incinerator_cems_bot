@@ -1,0 +1,13 @@
+title: 起爐後直接停爐（起爐結束通知＋停爐首則；停爐轉下風再警告；停爐結束不通知）
+facility: neihu
+start: "2026-11-10 09:00"
+hours:
+  - {codes: [N], wd: 0, ws: 2.0}
+  - {codes: [C], wd: 0, ws: 2.0}
+  - {codes: [C], wd: 0, ws: 2.0}
+  - {codes: [E], wd: 0, ws: 2.0}
+  - {codes: [E], wd: 0, ws: 2.0}
+  - {codes: [E], wd: 90, ws: 2.0}
+  - {codes: [E], wd: 90, ws: 2.0}
+  - {codes: [H], wd: 90, ws: 2.0}
+  - {codes: [H], wd: 90, ws: 2.0}
