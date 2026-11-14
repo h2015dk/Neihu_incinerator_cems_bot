@@ -1,0 +1,76 @@
+name: beitou-cems-bot
+
+on:
+  workflow_dispatch:        # 由 cron-job.org 每小時呼叫 GitHub API 觸發；也可在 Actions 頁面手動按 Run
+    inputs:
+      mode:
+        description: "執行模式"
+        type: choice
+        options: [normal, dry-run, demo, force, force-group]
+        default: normal
+
+permissions:
+  contents: write           # github 圖床需要；不用的話可改 read
+
+concurrency:                # 前一次還沒跑完就不重疊執行
+  group: cems-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TZ: Asia/Taipei       # runner 預設 UTC，不設會讓資料延遲判斷差 8 小時
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安裝中文字型（地圖標題、圖例用）
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk
+
+      - run: pip install -r requirements.txt
+
+      - name: 還原上次的通報紀錄（避免重複通報）
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: bot-state-${{ github.run_id }}
+          restore-keys: bot-state-
+
+      - name: 執行機器人
+        env:
+          MOENV_API_KEY: ${{ secrets.MOENV_API_KEY }}
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_TO: ${{ secrets.LINE_TO }}
+          LINE_ADMIN_TO: ${{ secrets.LINE_ADMIN_TO }}
+          IMGUR_CLIENT_ID: ${{ secrets.IMGUR_CLIENT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          case "${{ inputs.mode || 'normal' }}" in
+            dry-run) python bot.py --dry-run ;;
+            demo)    python bot.py --demo ;;
+            force)   python bot.py --force ;;
+            force-group) python bot.py --force-group ;;
+            *)       python bot.py ;;
+          esac
+
+      - name: 儲存通報紀錄
+        if: always() && hashFiles('state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: bot-state-${{ github.run_id }}
+
+      - name: 保留地圖（Actions 頁面可下載，7 天）
+        if: always() && hashFiles('out/*.png') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: plume-${{ github.run_id }}
+          path: out/*.png
+          retention-days: 7
