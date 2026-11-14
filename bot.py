@@ -169,7 +169,17 @@ def forecast_change(fac, rec, cur, fc, now, cfg):
 FOOT = "※ 本訊息為模式估算，非實測結果"
 
 
-def msg_event(fac, ev, now, statuses, fc, cfg, warning=False):
+def event_types(cfg):
+    """(類型, 中文名稱, 運轉狀態碼, 是否發結束通知)"""
+    n = cfg["notify"]
+    types = [("startup", "起爐", n.get("event_codes", ["B", "C"]), True)]
+    if n.get("notify_shutdown", True):
+        types.append(("shutdown", "停爐", n.get("shutdown_codes", ["D", "E"]),
+                      n.get("shutdown_end_notice", False)))
+    return types
+
+
+def msg_event(fac, ev, now, statuses, fc, cfg, warning=False, label="起爐", send_end=True):
     n = cfg["notify"]
     prim, extras = n["primary_receptor"], n.get("extra_receptors", [])
     start = datetime.fromisoformat(ev["start"])
@@ -177,9 +187,9 @@ def msg_event(fac, ev, now, statuses, fc, cfg, warning=False):
     dur = int((last - start).total_seconds() // 3600)
     dur_txt = f"已持續 {dur} 小時" if dur > 0 else "剛開始"
     if warning:
-        lines = [f"⚠️ {fac['name']}起爐作業持續中（{day_word(start, now)} {start:%H:%M} 起，{dur_txt}）"]
+        lines = [f"⚠️ {fac['name']}{label}作業持續中（{day_word(start, now)} {start:%H:%M} 起，{dur_txt}）"]
     else:
-        lines = [f"{fac['name']}{day_word(start, now)} {start:%H:%M} 起有起爐作業（{dur_txt}）"]
+        lines = [f"{fac['name']}{day_word(start, now)} {start:%H:%M} 起有{label}作業（{dur_txt}）"]
     lines.append(rec_line(prim, statuses.get(prim)))
     for e in extras:
         if e in statuses:
@@ -194,90 +204,96 @@ def msg_event(fac, ev, now, statuses, fc, cfg, warning=False):
         lines.append("建議：本小時戶外活動可考慮改至室內，辦公室可關窗、空調改內循環")
     elif f is not None and new_s:
         lines.append(f"建議：{f['time']:%H:%M} 後的戶外活動可考慮改至室內")
-    lines += ["起爐結束時會再通知您", FOOT]
+    if send_end:
+        lines.append(f"{label}結束時會再通知您")
+    lines.append(FOOT)
     return "\n".join(lines)
 
 
-def msg_end(fac, snap, now, cfg):
+def msg_end(fac, snap, now, cfg, label="起爐"):
     prim = cfg["notify"]["primary_receptor"]
     s, e = datetime.fromisoformat(snap["start"]), datetime.fromisoformat(snap["end"])
-    lines = [f"✅ {fac['name']}起爐作業已於{day_word(e, now)} {e:%H:%M} 結束"
-             f"（{day_word(s, now)} {s:%H:%M} 起，共 {snap['hours']} 小時）",
+    lines = [f"✅ {fac['name']}{label}作業已於{day_word(e, now)} {e:%H:%M} 結束"
+             f"（{day_word(s, now)} {s:%H:%M} 起，共 {snap['hours']} 小時）"
+             + (f"，接著進入{snap['next']}作業" if snap.get("next") else ""),
              f"期間{prim}位於下風方向共 {snap['dw_hours']} 小時", FOOT]
     return "\n".join(lines)
 
 
-def msg_night(fac, snap, now, cfg):
+def msg_night(fac, snap, now, cfg, label="起爐"):
     prim = cfg["notify"]["primary_receptor"]
     s, e = datetime.fromisoformat(snap["start"]), datetime.fromisoformat(snap["end"])
     lines = [f"🌙 夜間紀錄：{fac['name']}於{day_word(s, now)} {s:%H:%M} 至{day_word(e, now)} {e:%H:%M}"
-             f" 有起爐作業（共 {snap['hours']} 小時），已結束",
+             f" 有{label}作業（共 {snap['hours']} 小時），已結束",
              f"期間{prim}位於下風方向共 {snap['dw_hours']} 小時", FOOT]
     return "\n".join(lines)
 
 
 # ======================== 核心：每座廠每小時一步 ========================
 def step(fac, now, obs, wind, fc, st, cfg):
-    """obs = {"time": datetime, "startup": bool, "flues": [...]}（無資料時 None）
-    回傳要發送的訊息 [(文字, 是否附地圖)]。此函式不做任何網路傳送，方便情境測試。"""
-    fid = fac["id"]
-    ev = st["events"].setdefault(fid, {"active": False})
-    pend = st["pending"].setdefault(fid, [])
-    out = []
+    """obs = {"time": datetime, "startup": bool, "shutdown": bool, "flues": [...]}（無資料時 None）
+    回傳要發送的訊息 [(文字, 是否附地圖, 事件類型)]。此函式不做網路傳送，方便情境測試。"""
     n = cfg["notify"]
     receptors = [n["primary_receptor"]] + n.get("extra_receptors", [])
-
-    def statuses_now():
-        if not wind:
-            return {}
-        return {r: downwind(fac, receptor_by_name(cfg, r), wind["wd"], wind["ws"], cfg)
-                for r in receptors if receptor_by_name(cfg, r)}
-
-    sts = statuses_now()
+    sts = {} if not wind else {
+        r: downwind(fac, receptor_by_name(cfg, r), wind["wd"], wind["ws"], cfg)
+        for r in receptors if receptor_by_name(cfg, r)}
     prim_now = sts.get(n["primary_receptor"])
-
-    # 1) 依新的一小時資料更新事件狀態
-    if obs and obs["time"].isoformat() != ev.get("last_hour"):
-        t = obs["time"]
-        if obs["startup"]:
-            if not ev["active"]:
-                ev.clear()
-                ev.update(active=True, start=t.isoformat(), hours=0, dw_hours=0,
-                          start_sent=False, dw_sent=False)
-            ev["hours"] += 1
-            ev["dw_hours"] += 1 if prim_now else 0
-        elif ev["active"]:
-            pend.append({"kind": "end" if ev["start_sent"] else "night",
-                         "start": ev["start"], "end": t.isoformat(),
-                         "hours": ev["hours"], "dw_hours": ev["dw_hours"]})
-            ev.clear()
-            ev["active"] = False
-        ev["last_hour"] = t.isoformat()
-
-    if not in_window(now, cfg):
-        return out
-
-    # 2) 補發已結束事件的通知
-    for snap in pend:
-        out.append((msg_end(fac, snap, now, cfg) if snap["kind"] == "end"
-                    else msg_night(fac, snap, now, cfg), False))
-    pend.clear()
-
-    # 3) 進行中的事件
     low = wind and wind.get("consistency", 1) < cfg.get("wind", {}).get("low_consistency", 0.5)
 
     def note(t):  # 合成風場各站差異大時加註
         return t.replace(FOOT, "※ 各測站風向差異大，下風判斷可信度較低\n" + FOOT) if low else t
 
-    if ev.get("active"):
-        if not ev["start_sent"]:                       # 第一次發送
-            out.append((note(msg_event(fac, ev, now, sts, fc, cfg)), n.get("attach_map", True)))
-            ev["start_sent"] = True
-            ev["dw_sent"] = bool(prim_now)             # 第一次就在下風 → 之後不再警告
-        elif not ev["dw_sent"] and prim_now:          # 第一次不在下風，之後轉為下風 → 再警告一次
-            out.append((note(msg_event(fac, ev, now, sts, fc, cfg, warning=True)),
-                        n.get("attach_map", True)))
-            ev["dw_sent"] = True
+    out = []
+    for etype, label, _codes, send_end in event_types(cfg):
+        key = fac["id"] if etype == "startup" else f"{fac['id']}:{etype}"
+        ev = st["events"].setdefault(key, {"active": False})
+        pend = st["pending"].setdefault(key, [])
+
+        # 1) 依新的一小時資料更新事件狀態
+        if obs and obs["time"].isoformat() != ev.get("last_hour"):
+            t = obs["time"]
+            if obs.get(etype):
+                if not ev["active"]:
+                    ev.clear()
+                    ev.update(active=True, start=t.isoformat(), hours=0, dw_hours=0,
+                              start_sent=False, dw_sent=False)
+                ev["hours"] += 1
+                ev["dw_hours"] += 1 if prim_now else 0
+            elif ev["active"]:
+                # 已發過首則 → 結束通知（停爐依設定不發）；整段在夜間 → 早上補夜間紀錄
+                kind = ("end" if send_end else None) if ev["start_sent"] else "night"
+                if kind:
+                    nxt = next((lb for et, lb, _c, _e in event_types(cfg)
+                                if et != etype and obs.get(et)), None)
+                    pend.append({"kind": kind, "start": ev["start"], "end": t.isoformat(),
+                                 "hours": ev["hours"], "dw_hours": ev["dw_hours"], "next": nxt})
+                ev.clear()
+                ev["active"] = False
+            ev["last_hour"] = t.isoformat()
+
+        if not in_window(now, cfg):
+            continue
+
+        # 2) 補發已結束事件的通知
+        for snap in pend:
+            out.append((msg_end(fac, snap, now, cfg, label) if snap["kind"] == "end"
+                        else msg_night(fac, snap, now, cfg, label), False, etype))
+        pend.clear()
+
+        # 3) 進行中的事件
+        if ev.get("active"):
+            if not ev["start_sent"]:                   # 第一次發送
+                out.append((note(msg_event(fac, ev, now, sts, fc, cfg, label=label,
+                                           send_end=send_end)),
+                            n.get("attach_map", True), etype))
+                ev["start_sent"] = True
+                ev["dw_sent"] = bool(prim_now)         # 第一次就在下風 → 之後不再警告
+            elif not ev["dw_sent"] and prim_now:      # 第一次不在下風，之後轉為下風 → 再警告一次
+                out.append((note(msg_event(fac, ev, now, sts, fc, cfg, warning=True, label=label,
+                                           send_end=send_end)),
+                            n.get("attach_map", True), etype))
+                ev["dw_sent"] = True
     return out
 
 
@@ -305,8 +321,9 @@ def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True):
     return png, img, (line_push.upload_image(prev, cfg) if img else None)
 
 
-def fake_flue(t, flow_nm3_hr=None):
-    return {"polno": "P", "time": t, "ops": ["C"], "startup": True, "shutdown": False,
+def fake_flue(t, flow_nm3_hr=None, etype="startup"):
+    return {"polno": "P", "time": t, "ops": ["C" if etype == "startup" else "E"],
+            "startup": etype == "startup", "shutdown": etype == "shutdown",
             "fault": False, "flow": (float(flow_nm3_hr), "Nm3/hr") if flow_nm3_hr else None,
             "temp_c": None}
 
@@ -317,10 +334,15 @@ def observe(fac, rows, cfg):
     if not res:
         return None
     t = max(r["time"] for r in res)
-    codes = set(cfg["notify"].get("event_codes", ["B", "C"]))
     flues = [r for r in res if r["time"] == t]
-    return {"time": t, "startup": any(set(r["ops"]) & codes for r in flues),
-            "flues": flues, "ops": sorted({o for r in flues for o in r["ops"]})}
+    obs = {"time": t, "flues": flues, "ops": sorted({o for r in flues for o in r["ops"]})}
+    for etype, _label, codes, _end in event_types(cfg):
+        obs[etype] = any(set(r["ops"]) & set(codes) for r in flues)
+        for r in flues:  # 依通報設定標記各管道狀態（模擬時挑選管道用）
+            r[etype] = bool(set(r["ops"]) & set(codes))
+    obs.setdefault("startup", False)
+    obs.setdefault("shutdown", False)
+    return obs
 
 
 def run_live(cfg, args):
@@ -364,18 +386,19 @@ def run_live(cfg, args):
                         + (f"｜⚠️資料延遲 {age:.0f} 小時" if age > cfg["alert"]["max_data_age_hours"] else ""))
         if args.force:  # 測試：把現在當成起爐，直接發一則
             st_tmp = {"events": {}, "pending": {}}
-            obs_f = {**obs, "startup": True}
+            obs_f = {**obs, "startup": True, "shutdown": False}
             msgs = step(fac, now.replace(hour=12), obs_f, wind, fc, st_tmp, cfg)
-            msgs = [("🧪 測試訊息（非真實起爐）\n" + m, a) for m, a in msgs]
+            msgs = [("🧪 測試訊息（非真實起爐）\n" + m, a, e) for m, a, e in msgs if e == "startup"]
         else:
             msgs = step(fac, now, obs, wind, fc, st, cfg)
-        for text, attach in msgs:
+        for text, attach, etype in msgs:
             img = prev = None
             if attach and wind:
                 if args.force:  # 測試：固定用設定檔的測試流率（未設定則用預設流率）
                     flues = [fake_flue(obs["time"], fac.get("force_flow_nm3_per_hr"))]
                 else:
-                    flues = [f for f in obs["flues"] if f["startup"]] or [fake_flue(obs["time"])]
+                    flues = [f for f in obs["flues"] if f.get(etype)] or \
+                        [fake_flue(obs["time"], etype=etype)]
                 _, img, prev = render_map(fac, flues, wind, obs["time"], cfg,
                                           os.path.join(HERE, "out"), upload=not args.dry_run)
             line_push.push(cfg, text, img, prev, dry_run=args.dry_run,
@@ -401,15 +424,17 @@ def run_scenario(path, cfg, make_maps=False):
     facs = {f["id"]: f for f in facilities_of(cfg)}
     fac = facs[sc["facility"]]
     t0 = datetime.strptime(sc["start"], "%Y-%m-%d %H:%M")
-    codes = set(cfg["notify"].get("event_codes", ["B", "C"]))
     hours = sc["hours"]
     st = {"events": {}, "pending": {}}
     print(f"\n==== 情境：{sc.get('title', path)}（{fac['name']}）====")
     for i, h in enumerate(hours):
         t = t0 + timedelta(hours=i)
         now = t + timedelta(minutes=20)
-        startup = bool(set(h["codes"]) & codes)
-        obs = {"time": t, "startup": startup, "flues": [fake_flue(t)]}
+        flags = {et: bool(set(h["codes"]) & set(cs)) for et, _l, cs, _e in event_types(cfg)}
+        startup = flags.get("startup", False)
+        etype_now = "shutdown" if flags.get("shutdown") else "startup"
+        obs = {"time": t, "startup": startup, "shutdown": flags.get("shutdown", False),
+               "flues": [fake_flue(t, etype=etype_now)]}
         wind = {"name": "情境測站", "src_label": "情境測試（假設值）", "site": "情境測站",
                 "lat": fac["stack_lat"] + 0.01, "lon": fac["stack_lon"] + 0.015,
                 "ws": h["ws"], "wd": h["wd"], "temp_c": 22, "time": f"{t:%m/%d %H:%M}",
@@ -421,17 +446,17 @@ def run_scenario(path, cfg, make_maps=False):
         msgs = step(fac, now, obs, wind, fc, st, cfg)
         dw = downwind(fac, receptor_by_name(cfg, cfg["notify"]["primary_receptor"]),
                       h["wd"], h["ws"], cfg)
-        tag = "起爐" if startup else "正常"
+        tag = "起爐" if startup else "停爐" if flags.get("shutdown") else "正常"
         print(f"[{now:%m/%d %H:%M}] CEMS {t:%H:%M} {tag}｜風從 {h['wd']}° {h['ws']} m/s｜"
               f"{cfg['notify']['primary_receptor']}{'在' if dw else '不在' if dw is False else '?'}下風"
               f"｜{'發送時段' if in_window(now, cfg) else '靜默時段'}｜發送 {len(msgs)} 則")
-        for text, attach in msgs:
+        for text, attach, etype in msgs:
             print("   ┌──── LINE 訊息" + ("（附地圖）" if attach else ""))
             for ln in text.split("\n"):
                 print("   │ " + ln)
             print("   └────")
             if attach and make_maps:
-                png, _, _ = render_map(fac, [fake_flue(t)], wind, t, cfg,
+                png, _, _ = render_map(fac, [fake_flue(t, etype=etype)], wind, t, cfg,
                                        os.path.join(HERE, "out", "scenario"), upload=False)
                 print(f"   地圖：{png}")
 

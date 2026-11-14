@@ -34,6 +34,9 @@ notify:                          # 通報規則
   window_start: "07:00"          # 只在此時段發送（臺灣時間）；時段外的通知延到下一個時段
   window_end: "20:00"            # cron 設每小時第 20 分時，20:20 那次不會發；要包含就改 "20:30"
   event_codes: ["B", "C"]        # 視為「起爐」的運轉狀態碼
+  notify_shutdown: true          # 停爐也通報（首則＋下風警告）
+  shutdown_codes: ["D", "E"]     # 視為「停爐」的運轉狀態碼
+  shutdown_end_notice: false     # 停爐結束不發通知
   primary_receptor: 環興公司     # 依此判斷是否加發下風警告
   extra_receptors: [松山國小]    # 補充資訊，只列出、不觸發警告
   downwind_half_angle_deg: 22.5  # 敏感點方位在煙流方向 ±此角度內 → 判定為下風【可調】
