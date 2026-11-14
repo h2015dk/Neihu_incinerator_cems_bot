@@ -54,7 +54,7 @@ jobs:
         run: |
           case "${{ inputs.mode || 'normal' }}" in
             dry-run) python bot.py --dry-run ;;
-            demo)    python bot.py --demo ;;
+            demo)    python bot.py --demo --maps ;;
             force)   python bot.py --force ;;
             force-group) python bot.py --force-group ;;
             *)       python bot.py ;;
@@ -68,9 +68,9 @@ jobs:
           key: bot-state-${{ github.run_id }}
 
       - name: 保留地圖（Actions 頁面可下載，7 天）
-        if: always() && hashFiles('out/*.png') != ''
+        if: always() && hashFiles('out/**/*.png') != ''
         uses: actions/upload-artifact@v4
         with:
           name: plume-${{ github.run_id }}
-          path: out/*.png
+          path: out/**/*.png
           retention-days: 7
