@@ -329,6 +329,21 @@ def run_live(cfg, args):
             hb_lines.append(f"・{fac['name']}：⚠️ 抓不到 CEMS 資料")
             continue
         age = (now - obs["time"]).total_seconds() / 3600
+        ev = st["events"].get(fac["id"], {})
+        prim = cfg["notify"]["primary_receptor"]
+        dw = downwind(fac, receptor_by_name(cfg, prim), wind["wd"], wind["ws"], cfg) if wind else None
+        log.info("%s 狀態｜CEMS 最新 %s（延遲 %.1f 小時）｜運轉代碼 %s｜起爐中：%s｜事件進行中：%s",
+                 fac["name"], obs["time"].strftime("%m/%d %H:%M"), age,
+                 ",".join(obs["ops"]) or "-", "是" if obs["startup"] else "否",
+                 "是" if ev.get("active") else "否")
+        if wind:
+            log.info("%s 風向｜%s %s（距 %.1f km，%s）風從 %.0f° %.1f m/s｜%s：%s",
+                     fac["name"], wind.get("src_label", ""), wind.get("site", wind["name"]),
+                     wind["dist_km"], wind["time"], wind["wd"], wind["ws"], prim,
+                     {True: "在下風", False: "不在下風", None: "風速微弱無法判斷"}[dw])
+        else:
+            log.warning("%s：抓不到測站風向", fac["name"])
+        log.info("%s 預報｜%s", fac["name"], f"取得 {len(fc)} 筆" if fc else "未取得（沒有 CWA_API_KEY 或解析失敗）")
         hb_lines.append(f"・{fac['name']}：CEMS 最新 {obs['time']:%m/%d %H:%M}"
                         f"（運轉代碼 {','.join(obs['ops']) or '-'}）"
                         + (f"｜⚠️資料延遲 {age:.0f} 小時" if age > cfg["alert"]["max_data_age_hours"] else ""))
@@ -349,6 +364,8 @@ def run_live(cfg, args):
                            admin=args.force and not args.to_group)
 
     # 每日運作確認（當天第一次進入發送時段時）
+    log.info("發送時段：%s｜今日運作確認：%s", "是" if in_window(now, cfg) else "否",
+             "已發送" if st.get("heartbeat_date") == now.date().isoformat() else "未發送")
     if cfg["notify"].get("heartbeat") and in_window(now, cfg) and not args.force \
             and st.get("heartbeat_date") != now.date().isoformat():
         line_push.push(cfg, "🤖 監控機器人運作正常\n" + "\n".join(hb_lines), dry_run=args.dry_run,
