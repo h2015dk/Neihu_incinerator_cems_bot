@@ -1,0 +1,12 @@
+title: 防制設備異常（首則＋轉下風警告＋恢復通知），之後起爐且防制設備也異常（B 碼加註）
+facility: neihu
+start: "2026-11-10 09:00"
+hours:
+  - {codes: [N], wd: 0, ws: 2.0}
+  - {codes: [A], wd: 0, ws: 2.0}
+  - {codes: [A], wd: 0, ws: 2.0}
+  - {codes: [A], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
+  - {codes: [B], wd: 90, ws: 2.0}
+  - {codes: [C], wd: 90, ws: 2.0}
+  - {codes: [N], wd: 90, ws: 2.0}
