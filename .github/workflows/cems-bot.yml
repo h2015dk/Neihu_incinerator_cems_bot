@@ -1,4 +1,4 @@
-name: beitou-cems-bot
+name: Neihu-cems-bot
 
 on:
   workflow_dispatch:        # 由 cron-job.org 每小時呼叫 GitHub API 觸發；也可在 Actions 頁面手動按 Run
