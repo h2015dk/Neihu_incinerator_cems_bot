@@ -233,7 +233,7 @@ def msg_end(fac, snap, now, cfg, etype="startup"):
     prim = cfg["notify"]["primary_receptor"]
     s, e = datetime.fromisoformat(snap["start"]), datetime.fromisoformat(snap["end"])
     lines = [f"✅ {fac['name']}" + ph["end"].format(t=f"{day_word(e, now)} {e:%H:%M} ")
-             + f"（{day_word(s, now)} {s:%H:%M} 起，共 {snap['hours']} 小時）"
+             + f"（{day_word(s, now)} {s:%H:%M} 起，共 {snap['hours']:g} 小時）"
              + (f"，接著進入{PHRASE[snap['next']]['next']}" if snap.get("next") else ""),
              f"期間{prim}位於下風方向共 {snap['dw_hours']} 小時", FOOT]
     return "\n".join(lines)
@@ -244,7 +244,7 @@ def msg_night(fac, snap, now, cfg, etype="startup"):
     prim = cfg["notify"]["primary_receptor"]
     s, e = datetime.fromisoformat(snap["start"]), datetime.fromisoformat(snap["end"])
     lines = [f"🌙 夜間紀錄：{fac['name']}於{day_word(s, now)} {s:%H:%M} 至{day_word(e, now)} {e:%H:%M}"
-             f" {ph['night']}（共 {snap['hours']} 小時），已結束",
+             f" {ph['night']}（共 {snap['hours']:g} 小時），已結束",
              f"期間{prim}位於下風方向共 {snap['dw_hours']} 小時", FOOT]
     return "\n".join(lines)
 
@@ -286,8 +286,9 @@ def step(fac, now, obs, wind, fc, st, cfg):
                 if kind:
                     nxt = next((et for et, _lb, _c, _e in event_types(cfg)
                                 if et != etype and obs.get(et)), None)
+                    dur_h = (t - datetime.fromisoformat(ev["start"])).total_seconds() / 3600
                     pend.append({"kind": kind, "start": ev["start"], "end": t.isoformat(),
-                                 "hours": ev["hours"], "dw_hours": ev["dw_hours"], "next": nxt})
+                                 "hours": round(dur_h, 1), "dw_hours": ev["dw_hours"], "next": nxt})
                 ev.clear()
                 ev["active"] = False
             ev["last_hour"] = t.isoformat()

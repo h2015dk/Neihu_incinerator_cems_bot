@@ -32,6 +32,11 @@ def fetch_dataset(dataset: str, api_key: str, filters: str | None = None,
     return rows
 
 
+def _ds(cfg: dict) -> str:
+    """CEMS 資料集：aqx_p_187＝1 小時紀錄值（預設）、aqx_p_186＝15 分鐘紀錄值、aqx_p_185＝6 分鐘紀錄值"""
+    return str(cfg.get("cems_dataset", "aqx_p_187")).lower()
+
+
 def fetch_all_facilities(cfg: dict, facilities: list[dict]) -> dict[str, list[dict]]:
     """依序嘗試：①管制編號篩選 ②縣市篩選 ③抓全表。每一步都確認真的比對到該廠才採用，
     避免伺服器端篩選語法失效（被忽略）時，只抓到別家資料就誤判為「沒有資料」。"""
@@ -55,35 +60,51 @@ def fetch_all_facilities(cfg: dict, facilities: list[dict]) -> dict[str, list[di
         try:
             # 實測 API 回傳順序為新資料在前，前 3000 筆約涵蓋 4～5 天，足夠判斷最新一小時。
             # 若最新資料比 12 小時前還舊（代表順序不是新到舊），再擴大抓取量。
-            rows = fetch_dataset("aqx_p_187", key, filters=f"cno,EQ,{f['cno']}", max_rows=3000)
+            rows = fetch_dataset(_ds(cfg), key, filters=f"cno,EQ,{f['cno']}", max_rows=3000)
             ts = [t for t in (_parse_time(r.get("m_time")) for r in rows) if t]
             if ts and (datetime.now() - max(ts)).total_seconds() > 12 * 3600:
                 log.info("%s：前 %d 筆最新只到 %s，擴大抓取", f["name"], len(rows), max(ts))
-                rows = fetch_dataset("aqx_p_187", key, filters=f"cno,EQ,{f['cno']}", max_rows=80000)
+                rows = fetch_dataset(_ds(cfg), key, filters=f"cno,EQ,{f['cno']}", max_rows=80000)
             take(rows, "管制編號篩選")
         except Exception as e:  # noqa: BLE001
             log.warning("管制編號篩選失敗：%s", e)
     for county in sorted({f.get("epb_county") for f in pending if f.get("epb_county")}):
         try:
-            take(fetch_dataset("aqx_p_187", key, filters=f"epb_county,EQ,{county}", max_rows=50000),
+            take(fetch_dataset(_ds(cfg), key, filters=f"epb_county,EQ,{county}", max_rows=50000),
                  "縣市篩選")
         except Exception as e:  # noqa: BLE001
             log.warning("縣市篩選失敗：%s", e)
     if pending:
-        take(fetch_dataset("aqx_p_187", key, max_rows=400000), "全表")
+        take(fetch_dataset(_ds(cfg), key, max_rows=400000), "全表")
     for f in pending:
         out[f["name"]] = []
     return out
 
 
 def diagnose(cfg: dict, facilities: list[dict]) -> None:
-    """印出資料集實際內容，協助找出正確的管制編號與公司簡稱。"""
+    """印出資料集實際內容，協助找出正確的管制編號與公司簡稱；並比較三個 CEMS 資料集的延遲。"""
     key = cfg["moenv_api_key"]
+    print(f"目前使用的 CEMS 資料集：{_ds(cfg)}")
+    for f in [f for f in facilities if f.get("cno")]:
+        print(f"\n===== 延遲比較：{f['name']}（cno={f['cno']}）=====")
+        for ds, name in [("aqx_p_187", "1 小時紀錄值"), ("aqx_p_186", "15 分鐘紀錄值"),
+                         ("aqx_p_185", "6 分鐘紀錄值")]:
+            try:
+                rows = fetch_dataset(ds, key, filters=f"cno,EQ,{f['cno']}", max_rows=3000)
+                ts = [t for t in (_parse_time(r.get("m_time")) for r in rows) if t]
+                if ts:
+                    lag = (datetime.now() - max(ts)).total_seconds() / 3600
+                    print(f"   {ds}（{name}）：最新 {max(ts):%m/%d %H:%M}，延遲約 {lag:.1f} 小時，"
+                          f"取得 {len(rows)} 筆")
+                else:
+                    print(f"   {ds}（{name}）：沒有資料")
+            except Exception as e:  # noqa: BLE001
+                print(f"   {ds}（{name}）：錯誤 {e}")
     for f in facilities:
         print(f"\n===== 診斷：{f['name']}（設定 cno={f.get('cno')!r}，關鍵字={f.get('abbr_keywords')}）=====")
         if f.get("cno"):
             try:
-                rows = fetch_dataset("aqx_p_187", key, filters=f"cno,EQ,{f['cno']}", max_rows=5000)
+                rows = fetch_dataset(_ds(cfg), key, filters=f"cno,EQ,{f['cno']}", max_rows=5000)
                 cnos = {r.get("cno") for r in rows}
                 print(f"① 管制編號篩選：回傳 {len(rows)} 筆，含管制編號 {len(cnos)} 種"
                       + ("（篩選似乎沒有作用）" if len(cnos) > 1 else ""))
@@ -92,7 +113,7 @@ def diagnose(cfg: dict, facilities: list[dict]) -> None:
                 print("① 管制編號篩選錯誤：", e)
         county = f.get("epb_county")
         try:
-            rows = fetch_dataset("aqx_p_187", key, filters=f"epb_county,EQ,{county}", max_rows=50000)
+            rows = fetch_dataset(_ds(cfg), key, filters=f"epb_county,EQ,{county}", max_rows=50000)
             print(f"② 縣市篩選（{county}）：回傳 {len(rows)} 筆")
             _summary(rows, f)
         except Exception as e:  # noqa: BLE001
