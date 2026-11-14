@@ -1,0 +1,12 @@
+title: 白天起爐、一開始環興就在下風（只發首則＋結束）
+facility: neihu
+start: "2026-11-10 12:00"
+# 每列一小時：codes＝運轉狀態碼，wd＝風從哪來(度)，ws＝風速 m/s
+# 內湖焚化廠 → 環興公司 約在正西方 1 km，吹東風(wd≈90)時環興在下風
+hours:
+  - {codes: [N], wd: 90, ws: 2.5}
+  - {codes: [C], wd: 90, ws: 2.5}
+  - {codes: [C], wd: 80, ws: 2.0}
+  - {codes: [C], wd: 30, ws: 2.0}
+  - {codes: [C], wd: 90, ws: 3.0}
+  - {codes: [N], wd: 90, ws: 3.0}
