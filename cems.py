@@ -53,8 +53,14 @@ def fetch_all_facilities(cfg: dict, facilities: list[dict]) -> dict[str, list[di
 
     for f in [f for f in pending if f.get("cno")]:
         try:
-            take(fetch_dataset("aqx_p_187", key, filters=f"cno,EQ,{f['cno']}", max_rows=20000),
-                 "管制編號篩選")
+            # 實測 API 回傳順序為新資料在前，前 3000 筆約涵蓋 4～5 天，足夠判斷最新一小時。
+            # 若最新資料比 12 小時前還舊（代表順序不是新到舊），再擴大抓取量。
+            rows = fetch_dataset("aqx_p_187", key, filters=f"cno,EQ,{f['cno']}", max_rows=3000)
+            ts = [t for t in (_parse_time(r.get("m_time")) for r in rows) if t]
+            if ts and (datetime.now() - max(ts)).total_seconds() > 12 * 3600:
+                log.info("%s：前 %d 筆最新只到 %s，擴大抓取", f["name"], len(rows), max(ts))
+                rows = fetch_dataset("aqx_p_187", key, filters=f"cno,EQ,{f['cno']}", max_rows=80000)
+            take(rows, "管制編號篩選")
         except Exception as e:  # noqa: BLE001
             log.warning("管制編號篩選失敗：%s", e)
     for county in sorted({f.get("epb_county") for f in pending if f.get("epb_county")}):
