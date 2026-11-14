@@ -50,6 +50,7 @@ jobs:
           LINE_TO: ${{ secrets.LINE_TO }}
           LINE_ADMIN_TO: ${{ secrets.LINE_ADMIN_TO }}
           IMGUR_CLIENT_ID: ${{ secrets.IMGUR_CLIENT_ID }}
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}   # 可選；沒有就不使用 CARTO 底圖
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           case "${{ inputs.mode || 'normal' }}" in
