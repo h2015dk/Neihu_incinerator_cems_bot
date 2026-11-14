@@ -11,20 +11,33 @@ API = "https://data.moenv.gov.tw/api/v2"
 log = logging.getLogger(__name__)
 
 
+class ServerBusy(Exception):
+    """環境部 API 暫時無法正常回應（逾時、連線失敗、5xx/429、回應不是 JSON）。"""
+
+
 def _get_json(url: str, params: dict, tries: int = 3, timeout=(10, 40)):
-    """單次請求最多重試 tries 次（退避 3、6 秒）。環境部 API 偶爾很慢，重試比等 60 秒有效。"""
+    """單次請求最多重試 tries 次（退避 3、6 秒）。逾時、連線失敗、5xx/429、
+    以及回應不是合法 JSON（空內容或錯誤頁）都視為伺服器問題；用盡次數後丟出 ServerBusy。"""
     last: Exception | None = None
     for i in range(tries):
         try:
+            t0 = time.monotonic()
             r = requests.get(url, params=params, timeout=timeout)
-            r.raise_for_status()
+            log.info("API 回應 HTTP %s，耗時 %.1f 秒", r.status_code, time.monotonic() - t0)
+            if r.status_code == 429 or r.status_code >= 500:
+                raise requests.HTTPError(f"HTTP {r.status_code}")
+            r.raise_for_status()          # 其他 4xx（如金鑰錯誤）不重試，直接丟出
             return r.json()
-        except (requests.Timeout, requests.ConnectionError) as e:
+        except (requests.Timeout, requests.ConnectionError, ValueError) as e:
             last = e
-            log.warning("請求逾時／連線失敗（第 %d/%d 次）：%s", i + 1, tries, e)
-            if i < tries - 1:
-                time.sleep(3 * (i + 1))
-    raise last  # type: ignore[misc]
+        except requests.HTTPError as e:
+            if "HTTP 429" not in str(e) and "HTTP 5" not in str(e):
+                raise
+            last = e
+        log.warning("請求失敗（第 %d/%d 次）：%s", i + 1, tries, last)
+        if i < tries - 1:
+            time.sleep(3 * (i + 1))
+    raise ServerBusy(str(last))
 
 
 def fetch_dataset(dataset: str, api_key: str, filters: str | None = None,
@@ -86,8 +99,8 @@ def fetch_all_facilities(cfg: dict, facilities: list[dict]) -> dict[str, list[di
                 rows = fetch_dataset(_ds(cfg), key, filters=f"cno,EQ,{f['cno']}",
                                      page=1000, max_rows=10000)
             take(rows, "管制編號篩選")
-        except (requests.Timeout, requests.ConnectionError) as e:
-            log.error("%s：環境部 API 逾時，本輪放棄（不改用更大的查詢）：%s", f["name"], e)
+        except ServerBusy as e:
+            log.error("%s：環境部 API 無法正常回應，本輪放棄（不改用更大的查詢）：%s", f["name"], e)
             server_down = True
         except Exception as e:  # noqa: BLE001
             log.warning("管制編號篩選失敗：%s", e)
@@ -101,11 +114,18 @@ def fetch_all_facilities(cfg: dict, facilities: list[dict]) -> dict[str, list[di
         try:
             take(fetch_dataset(_ds(cfg), key, filters=f"epb_county,EQ,{county}", max_rows=20000),
                  "縣市篩選")
+        except ServerBusy as e:
+            log.error("縣市篩選：環境部 API 無法正常回應，本輪放棄：%s", e)
+            for f in pending:
+                out[f["name"]] = []
+            return out
         except Exception as e:  # noqa: BLE001
             log.warning("縣市篩選失敗：%s", e)
     if pending:
         try:
             take(fetch_dataset(_ds(cfg), key, max_rows=100000), "全表")
+        except ServerBusy as e:
+            log.error("全表抓取：環境部 API 無法正常回應，本輪放棄：%s", e)
         except Exception as e:  # noqa: BLE001
             log.warning("全表抓取失敗：%s", e)
     for f in pending:
@@ -248,7 +268,7 @@ def evaluate(rows: list[dict], cfg: dict) -> list[dict]:
                 flow = (val, str(r.get("unit", "")))
             elif "溫度" in desc:
                 temp = val
-            elif "氧" in desc:
+            elif "氧氣" in desc:
                 o2 = val
 
         reasons = []
