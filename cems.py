@@ -2,12 +2,29 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 
 import requests
 
 API = "https://data.moenv.gov.tw/api/v2"
 log = logging.getLogger(__name__)
+
+
+def _get_json(url: str, params: dict, tries: int = 3, timeout=(10, 40)):
+    """單次請求最多重試 tries 次（退避 3、6 秒）。環境部 API 偶爾很慢，重試比等 60 秒有效。"""
+    last: Exception | None = None
+    for i in range(tries):
+        try:
+            r = requests.get(url, params=params, timeout=timeout)
+            r.raise_for_status()
+            return r.json()
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last = e
+            log.warning("請求逾時／連線失敗（第 %d/%d 次）：%s", i + 1, tries, e)
+            if i < tries - 1:
+                time.sleep(3 * (i + 1))
+    raise last  # type: ignore[misc]
 
 
 def fetch_dataset(dataset: str, api_key: str, filters: str | None = None,
@@ -19,9 +36,7 @@ def fetch_dataset(dataset: str, api_key: str, filters: str | None = None,
         params["filters"] = filters
     rows: list[dict] = []
     while len(rows) < max_rows:
-        r = requests.get(f"{API}/{dataset}", params=params, timeout=60)
-        r.raise_for_status()
-        js = r.json()
+        js = _get_json(f"{API}/{dataset}", params)
         recs = js.get("records", []) if isinstance(js, dict) else js
         if not recs:
             break
@@ -39,10 +54,13 @@ def _ds(cfg: dict) -> str:
 
 def fetch_all_facilities(cfg: dict, facilities: list[dict]) -> dict[str, list[dict]]:
     """依序嘗試：①管制編號篩選 ②縣市篩選 ③抓全表。每一步都確認真的比對到該廠才採用，
-    避免伺服器端篩選語法失效（被忽略）時，只抓到別家資料就誤判為「沒有資料」。"""
+    避免伺服器端篩選語法失效（被忽略）時，只抓到別家資料就誤判為「沒有資料」。
+    重要：只有「查詢成功但比對不到」才往下退；若是逾時／連線失敗（伺服器問題），
+    退到更大的查詢只會更慢，直接放棄這一輪，等下一次排程再試。"""
     key = cfg["moenv_api_key"]
     out: dict[str, list[dict]] = {}
     pending = list(facilities)
+    server_down = False
 
     def take(rows, label):
         nonlocal pending
@@ -58,24 +76,38 @@ def fetch_all_facilities(cfg: dict, facilities: list[dict]) -> dict[str, list[di
 
     for f in [f for f in pending if f.get("cno")]:
         try:
-            # 實測 API 回傳順序為新資料在前，前 3000 筆約涵蓋 4～5 天，足夠判斷最新一小時。
-            # 若最新資料比 12 小時前還舊（代表順序不是新到舊），再擴大抓取量。
-            rows = fetch_dataset(_ds(cfg), key, filters=f"cno,EQ,{f['cno']}", max_rows=3000)
+            # API 回傳順序為新資料在前，只需最新一小時，1500 筆綽綽有餘。
+            rows = fetch_dataset(_ds(cfg), key, filters=f"cno,EQ,{f['cno']}",
+                                 page=500, max_rows=1500)
             ts = [t for t in (_parse_time(r.get("m_time")) for r in rows) if t]
             if ts and (datetime.now() - max(ts)).total_seconds() > 12 * 3600:
+                # 順序可能不是新到舊，擴大抓取，但設上限避免拖垮整個 job
                 log.info("%s：前 %d 筆最新只到 %s，擴大抓取", f["name"], len(rows), max(ts))
-                rows = fetch_dataset(_ds(cfg), key, filters=f"cno,EQ,{f['cno']}", max_rows=80000)
+                rows = fetch_dataset(_ds(cfg), key, filters=f"cno,EQ,{f['cno']}",
+                                     page=1000, max_rows=10000)
             take(rows, "管制編號篩選")
+        except (requests.Timeout, requests.ConnectionError) as e:
+            log.error("%s：環境部 API 逾時，本輪放棄（不改用更大的查詢）：%s", f["name"], e)
+            server_down = True
         except Exception as e:  # noqa: BLE001
             log.warning("管制編號篩選失敗：%s", e)
+
+    if server_down:
+        for f in pending:
+            out[f["name"]] = []
+        return out
+
     for county in sorted({f.get("epb_county") for f in pending if f.get("epb_county")}):
         try:
-            take(fetch_dataset(_ds(cfg), key, filters=f"epb_county,EQ,{county}", max_rows=50000),
+            take(fetch_dataset(_ds(cfg), key, filters=f"epb_county,EQ,{county}", max_rows=20000),
                  "縣市篩選")
         except Exception as e:  # noqa: BLE001
             log.warning("縣市篩選失敗：%s", e)
     if pending:
-        take(fetch_dataset(_ds(cfg), key, max_rows=400000), "全表")
+        try:
+            take(fetch_dataset(_ds(cfg), key, max_rows=100000), "全表")
+        except Exception as e:  # noqa: BLE001
+            log.warning("全表抓取失敗：%s", e)
     for f in pending:
         out[f["name"]] = []
     return out
