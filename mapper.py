@@ -27,10 +27,12 @@ plt.rcParams["axes.unicode_minus"] = False
 R = 6378137.0
 TILE_SOURCES = {
     "osm": ("https://tile.openstreetmap.org/{z}/{x}/{y}.png", "© OpenStreetMap contributors"),
-    "carto_light": ("https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+    # CARTO 自 2026/8 底起要求 API 金鑰；沒有金鑰的圖磚會被印上「API KEY REQUIRED」浮水印
+    "carto_light": ("https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png",
                     "© OpenStreetMap contributors © CARTO"),
 }
 import os  # noqa: E402
+import time  # noqa: E402
 # OSM 圖磚政策要求可辨識的 User-Agent；在 GitHub Actions 上自動帶入 repo 網址
 _repo = os.environ.get("GITHUB_REPOSITORY", "")
 UA = {"User-Agent": f"incinerator-cems-bot/1.0 (+https://github.com/{_repo})" if _repo
@@ -62,15 +64,36 @@ def from_merc(x, y):
 
 
 # ---------- 底圖 ----------
-def fetch_tile(url: str) -> Image.Image:
-    r = requests.get(url, headers=UA, timeout=20)
-    r.raise_for_status()
-    return Image.open(io.BytesIO(r.content)).convert("RGB")
+def _needs_key(source: str) -> bool:
+    return source == "carto_light"
+
+
+def fetch_tile(url: str, key: str = "", tries: int = 3) -> Image.Image:
+    """抓單張圖磚。逾時／連線失敗／5xx 會重試；4xx（被封鎖、金鑰錯誤）不重試。"""
+    full = f"{url}?key={key}" if key else url
+    last: Exception | None = None
+    for i in range(tries):
+        try:
+            r = requests.get(full, headers=UA, timeout=20)
+            if r.status_code >= 500:
+                raise requests.HTTPError(f"HTTP {r.status_code}")
+            r.raise_for_status()
+            return Image.open(io.BytesIO(r.content)).convert("RGB")
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last = e
+        except requests.HTTPError as e:
+            if "HTTP 5" not in str(e):
+                raise
+            last = e
+        if i < tries - 1:
+            time.sleep(2 * (i + 1))
+    raise last  # type: ignore[misc]
 
 
 def basemap(ax, x0, x1, y0, y1, source="osm", px_width=1000, fade=0.25) -> str:
     """抓圖磚拼接後貼到 ax（座標為 Web Mercator 公尺）。回傳版權標示文字。"""
     url_t, attrib = TILE_SOURCES[source]
+    key = os.environ.get("CARTO_API_KEY", "").strip() if _needs_key(source) else ""
     res = (x1 - x0) / px_width
     z = int(min(18, max(10, math.ceil(math.log2(2 * math.pi * R / 256 / res)))))
     n = 2 ** z
@@ -83,7 +106,8 @@ def basemap(ax, x0, x1, y0, y1, source="osm", px_width=1000, fade=0.25) -> str:
     canvas = Image.new("RGB", (256 * len(xs), 256 * len(ys)), "white")
     for i, x in enumerate(xs):
         for j, y in enumerate(ys):
-            canvas.paste(fetch_tile(url_t.format(z=z, x=x % n, y=y)), (256 * i, 256 * j))
+            canvas.paste(fetch_tile(url_t.format(z=z, x=x % n, y=y), key=key),
+                         (256 * i, 256 * j))
     img = np.asarray(canvas, float) / 255
     img = img * (1 - fade) + fade  # 底圖調淡，讓濃度色塊看得清楚
     left = xs[0] * tile_m - math.pi * R
@@ -180,12 +204,17 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
     if src != "none":
         # 指定來源失敗時自動改用另一個來源
         for s in [src] + [k for k in TILE_SOURCES if k != src]:
+            if _needs_key(s) and not os.environ.get("CARTO_API_KEY", "").strip():
+                log.warning("底圖 %s 需要 CARTO_API_KEY（未設定），略過", s)
+                continue
             try:
                 attrib = basemap(ax, *fr, source=s, px_width=fig_w * 110,
                                  fade=map_cfg.get("basemap_fade", 0.25))
                 break
             except Exception as e:  # noqa: BLE001
-                log.warning("底圖 %s 載入失敗：%s", s, e)
+                msg = str(e)
+                k = os.environ.get("CARTO_API_KEY", "").strip()
+                log.warning("底圖 %s 載入失敗：%s", s, msg.replace(k, "***") if k else msg)
         if not attrib:
             log.warning("所有底圖來源都失敗，改為無底圖")
     if not attrib:
