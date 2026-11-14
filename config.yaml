@@ -15,9 +15,9 @@ facilities:                # 可監控多座廠；不需要的整段刪掉即可
     stack_lon: 121.60339989709442
     stack_height_m: 16.58    # 【待核】
     stack_diameter_m: 1.25  # 【待核】
-    default_exit_temp_c: 150
-    default_flow_nm3_per_hr: 100000
-    default_exit_velocity_m_s: 15
+    default_exit_temp_c: 165.8666667  # 使用者提供2025年均值
+    default_flow_nm3_per_hr: 38968.2  # 使用者提供2025年均值
+    default_exit_velocity_m_s: 13.77 # 使用者提供2025年均值
     wind_station: ""
     forecast_town: 內湖區   # 風向預報取用的行政區
 
