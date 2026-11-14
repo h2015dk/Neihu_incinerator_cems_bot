@@ -225,8 +225,15 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
             if inside(wx, wy, fr):
                 ax.plot(wx, wy, marker="o", color="blue", ms=8, zorder=6, ls="none",
                         label="風向測站" if first else None)
-                ax.annotate(st.get("site", st["name"]), (wx, wy), xytext=(6, -12),
-                            textcoords="offset points", fontsize=8, color="blue", zorder=6)
+                fx = (wx - fr[0]) / (fr[1] - fr[0])
+                fy = (wy - fr[2]) / (fr[3] - fr[2])
+                right = fx > 0.7                      # 靠右 → 標籤放左邊，避免超出圖框被色條擋住
+                low = fy < 0.2                        # 靠下 → 標籤放上方
+                ax.annotate(st.get("site", st["name"]), (wx, wy),
+                            xytext=(-7 if right else 7, 7 if low else -7),
+                            textcoords="offset points", fontsize=8, color="blue", zorder=7,
+                            ha="right" if right else "left", va="bottom" if low else "top",
+                            bbox=dict(fc="white", ec="none", alpha=0.75, pad=1))
                 first = False
 
     # 敏感點
@@ -267,9 +274,7 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
                     f"測站：{wind.get('site', wind['name'])}\n"
                     f"測站距焚化廠煙囪：{wind['dist_km']:.1f} km\n"
                     f"觀測時間：{wind['time']}")
-        ax.text(0.985, 0.02, info, transform=ax.transAxes, ha="right", va="bottom", fontsize=8,
-                color="navy", zorder=8, linespacing=1.4, multialignment="left",
-                bbox=dict(fc="white", ec="navy", lw=0.6, alpha=0.88, boxstyle="round,pad=0.4"))
+        wind_info = info
 
     # 煙流沒進入圖框時提示
     inframe = (MX >= fr[0]) & (MX <= fr[1]) & (MY >= fr[2]) & (MY <= fr[3]) & (C >= min(levels))
@@ -287,7 +292,10 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
     note = "高斯煙流篩選估算（非 AERMOD 正式模擬）；排放濃度為假設值"
     if attrib:
         note += f"　底圖 {attrib}"
-    ax.text(0, -0.13, note, transform=ax.transAxes, fontsize=7, color="gray", va="top")
+    info_txt = (locals().get("wind_info") or "") 
+    ax.text(0, -0.12, (info_txt + "\n" if info_txt else "") + note, transform=ax.transAxes,
+            fontsize=8, color="navy", va="top", ha="left", linespacing=1.45,
+            bbox=dict(fc="white", ec="navy", lw=0.6, boxstyle="round,pad=0.5"))
     fig.savefig(out_png, bbox_inches="tight")
     plt.close(fig)
     return out_png

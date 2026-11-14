@@ -20,6 +20,16 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def fmt_time(s) -> str:
+    """把 2026-11-14T13:00:00+08:00、2026/11/14 13:00:00 等統一成 11/14 13:00。"""
+    from datetime import datetime
+    txt = str(s).strip().replace("/", "-")
+    try:
+        return datetime.fromisoformat(txt.replace("Z", "+00:00")).strftime("%m/%d %H:%M")
+    except ValueError:
+        return str(s)
+
+
 def _f(v):
     try:
         x = float(v)
@@ -37,7 +47,7 @@ def moenv_stations(api_key: str) -> list[dict]:
             continue
         out.append({"name": f"環境部{r.get('sitename', '')}站", "lat": lat, "lon": lon,
                     "src_label": "環境部空氣品質監測站", "site": f"{r.get('sitename', '')}站",
-                    "ws": ws, "wd": wd, "temp_c": None, "time": r.get("publishtime", ""),
+                    "ws": ws, "wd": wd, "temp_c": None, "time": fmt_time(r.get("publishtime", "")),
                     "src": "moenv"})
     return out
 
@@ -59,7 +69,7 @@ def cwa_stations(cwa_key: str) -> list[dict]:
                         "src_label": "中央氣象署自動氣象站", "site": f"{s.get('StationName', '')}站",
                         "lat": float(c["StationLatitude"]), "lon": float(c["StationLongitude"]),
                         "ws": ws, "wd": wd, "temp_c": _f(we.get("AirTemperature")),
-                        "time": s.get("ObsTime", {}).get("DateTime", ""), "src": "cwa"})
+                        "time": fmt_time(s.get("ObsTime", {}).get("DateTime", "")), "src": "cwa"})
         except (KeyError, TypeError, ValueError, StopIteration):
             continue
     return out
