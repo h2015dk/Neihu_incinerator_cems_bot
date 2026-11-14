@@ -1,0 +1,100 @@
+# 複製成 config.yaml 再填寫。用 GitHub 執行時，金鑰欄位留空、改放 Repository secrets。
+#標【待核】的數值請以實際資料取代。
+
+moenv_api_key: "填入環境部環境資料開放平臺 API Key"
+cwa_api_key: ""            # 選填：中央氣象署開放資料授權碼（wind.source 設 cwa/auto 才用）
+
+facilities:                # 可監控多座廠；不需要的整段刪掉即可
+ 
+  - id: neihu
+    name: 內湖焚化廠
+    cno: "A4200130"                # 管制編號【待核】
+    abbr_keywords: ["內湖焚化廠"]   # 若比對到其他「內湖」業者，請改填 cno
+    epb_county: "臺北市"
+    stack_lat: 25.06303903157262   # 使用者提供
+    stack_lon: 121.60339989709442
+    stack_height_m: 16.58    # 【待核】
+    stack_diameter_m: 1.25  # 【待核】
+    default_exit_temp_c: 150
+    default_flow_nm3_per_hr: 100000
+    default_exit_velocity_m_s: 15
+    wind_station: ""
+    forecast_town: 內湖區   # 風向預報取用的行政區
+
+receptors:                 # 敏感點：一定畫進擴散圖，並在 LINE 訊息列出估算濃度
+  - name: 環興公司
+    lat: 25.06218106073602
+    lon: 121.59389274357389
+  - name: 松山國小
+    lat: 25.05047633780741
+    lon: 121.5782962560989
+
+notify:                          # 通報規則
+  window_start: "07:00"          # 只在此時段發送（臺灣時間）；時段外的通知延到下一個時段
+  window_end: "20:00"            # cron 設每小時第 20 分時，20:20 那次不會發；要包含就改 "20:30"
+  event_codes: ["B", "C"]        # 視為「起爐」的運轉狀態碼
+  primary_receptor: 環興公司     # 依此判斷是否加發下風警告
+  extra_receptors: [松山國小]    # 補充資訊，只列出、不觸發警告
+  downwind_half_angle_deg: 22.5  # 敏感點方位在煙流方向 ±此角度內 → 判定為下風【可調】
+  downwind_max_km: 10            # 超過此距離不判為下風
+  forecast_hours: 12             # 往後看幾小時的風向預報
+  attach_map: true               # 起爐首則與下風警告附擴散圖
+  heartbeat: true                # 每天第一次進入發送時段時，發一則「機器人運作正常」
+
+forecast:                        # 中央氣象署鄉鎮預報（需 cwa_api_key；沒有就不顯示預報句）
+  enabled: true
+  dataset: F-D0047-061           # 臺北市逐 3 小時預報
+
+alert:
+  startup_codes: ["B", "C"]     # 起火（爐）
+  shutdown_codes: ["D", "E"]    # 停車（爐）
+  control_fault_codes: ["A"]    # 正常運轉但防制設施異常（與戴奧辛相關，建議保留）
+  co_warn_ppm: null             # 自訂 CO 預警門檻（低於法規標準的提早警示），不用就 null
+  max_data_age_hours: 3
+
+dioxin:                          # CEMS 不量戴奧辛，以下為假設排放濃度（ng I-TEQ/Nm³）
+  startup_conc_ng_iteq_nm3: 10     # 起爐：依使用者指定
+  shutdown_conc_ng_iteq_nm3: 10    # 停爐【待核：暫沿用起爐值】
+  fault_conc_ng_iteq_nm3: 10       # 正常運轉但防制設施異常【待核：暫沿用起爐值】
+  normal_conc_ng_iteq_nm3: 0.1     # 正常運轉【待核】
+  run_on_co_exceed: true         # 只有 CO 超標（非起停爐）時是否也跑擴散
+
+dispersion:
+  grid_half_width_km: 15        # 會自動擴大到涵蓋所有敏感點
+  grid_step_m: 100
+  anemometer_height_m: 35        # 測站風速計高度【待核】
+  night_cloudy: false            # 夜間雲量未知；false=晴空（較穩定）
+  min_wind_m_s: 0.5
+  contour_levels_fg_teq_m3: [1, 10, 50, 100, 500, 1000]   # fg I-TEQ/m³
+
+map:
+  basemap: osm                   # osm（中文地名）| carto_light（淡色、英文地名）| none
+  basemap_fade: 0.25             # 底圖調淡比例 0~1
+  fill_alpha: 0.6                # 濃度色塊不透明度
+  top_color: "#3f007d"           # 最高濃度級距顏色（深紫）
+  # color_stops: ["#ffffb2", "#fecc5c", "#fd8d3c", "#e31a1c", "#99004c"]  # 其餘級距的漸層，可自訂
+  center: 環興公司               # 位於圖框正中央的敏感點（名稱須與 receptors 相同）
+  anchor:                        # 另一敏感點在圖框中的位置：x、y 各為圖寬、圖高的比例（由左下角起算）
+    name: 松山國小
+    x_frac: 0.10
+    y_frac: 0.10
+  # center 或 anchor 留空 → 改為依煙囪、敏感點、濃度範圍自動決定圖框
+
+wind:
+  source: moenv                  # moenv | cwa | auto（auto=兩者取最近）
+  fixed_station: ""              # 全部廠共用的指定測站；各廠 wind_station 優先
+
+line:
+  channel_access_token: "LINE Messaging API 的 Channel access token（long-lived）"
+  to: "通報對象：群組 groupId（C 開頭）或個人 userId（U 開頭）"
+  admin_to: ""                   # 管理者個人 userId；每日運作確認與 force 測試只發這裡（省群組則數）
+
+image_host:                      # LINE 圖片訊息只能用公開 HTTPS 網址
+  type: github                   # none | imgur | static | github（github 僅限 public repo）
+  github_branch: plume-images
+  imgur_client_id: ""
+  static_dir: ""                 # 例如 /var/www/html/plume
+  static_base_url: ""            # 例如 https://your-server/plume
+
+state_file: state.json
+
