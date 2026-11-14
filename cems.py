@@ -144,9 +144,15 @@ def _num(v):
 
 
 def _parse_time(s: str) -> datetime | None:
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M"):
+    """支援 2026-11-14T08:00:00（API 實際格式）、2026-11-14 08:00 等寫法。"""
+    txt = str(s).strip().replace("/", "-")
+    try:
+        return datetime.fromisoformat(txt.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
-            return datetime.strptime(str(s).strip(), fmt)
+            return datetime.strptime(txt, fmt)
         except ValueError:
             continue
     return None
