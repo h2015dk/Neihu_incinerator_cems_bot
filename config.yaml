@@ -37,6 +37,10 @@ notify:                          # 通報規則
   notify_shutdown: true          # 停爐也通報（首則＋下風警告）
   shutdown_codes: ["D", "E"]     # 視為「停爐」的運轉狀態碼
   shutdown_end_notice: false     # 停爐結束不發通知
+  notify_fault: true             # 防制設備異常（正常運轉中）也通報
+  fault_codes: ["A"]             # 視為「防制設備異常」的運轉狀態碼
+  fault_end_notice: true         # 防制設備恢復正常時發通知
+  fault_with_op_codes: ["B", "D"]  # 起爐／停爐訊息中加註「防制設備同時異常」的狀態碼
   primary_receptor: 環興公司     # 依此判斷是否加發下風警告
   extra_receptors: [松山國小]    # 補充資訊，只列出、不觸發警告
   downwind_half_angle_deg: 22.5  # 敏感點方位在煙流方向 ±此角度內 → 判定為下風【可調】
@@ -59,8 +63,8 @@ alert:
 dioxin:                          # CEMS 不量戴奧辛，以下為假設排放濃度（ng I-TEQ/Nm³）
   startup_conc_ng_iteq_nm3: 10     # 起爐：依使用者指定
   shutdown_conc_ng_iteq_nm3: 10    # 停爐【待核：暫沿用起爐值】
-  fault_conc_ng_iteq_nm3: 10       # 正常運轉但防制設施異常【待核：暫沿用起爐值】
-  normal_conc_ng_iteq_nm3: 0.1     # 正常運轉【待核】
+  fault_conc_ng_iteq_nm3: 1        # 正常運轉但防制設備異常：依使用者指定
+  normal_conc_ng_iteq_nm3: 0.1     # 正常運轉：依使用者指定（目前通報流程不模擬正常運轉）
   run_on_co_exceed: true         # 只有 CO 超標（非起停爐）時是否也跑擴散
 
 dispersion:
