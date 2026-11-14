@@ -3,7 +3,7 @@
 
 moenv_api_key: ""
 cwa_api_key: ""            # 選填：中央氣象署開放資料授權碼（wind.source 設 cwa/auto 才用）
-cems_dataset: aqx_p_187    # aqx_p_187＝1 小時紀錄值｜aqx_p_186＝15 分鐘紀錄值（更新較快）｜aqx_p_185＝6 分鐘紀錄值
+cems_dataset: aqx_p_186    # aqx_p_187＝1 小時紀錄值｜aqx_p_186＝15 分鐘紀錄值（更新較快）｜aqx_p_185＝6 分鐘紀錄值
 
 facilities:                # 可監控多座廠；不需要的整段刪掉即可
  
