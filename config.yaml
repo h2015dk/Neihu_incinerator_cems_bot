@@ -14,8 +14,8 @@ facilities:                # 可監控多座廠；不需要的整段刪掉即可
     epb_county: "臺北市"
     stack_lat: 25.06303903157262   # 使用者提供
     stack_lon: 121.60339989709442
-    stack_height_m: 16.58    # 【待核】
-    stack_diameter_m: 1.25  # 【待核】
+    stack_height_m: 74    # https://www.nhrip.gov.taipei/News_Content.aspx?n=4B131BBA3EBF5BA4&sms=27C2FD56F62BA6DC&s=B77DCE6AAC1D3021
+    stack_diameter_m: 1.25  # 許可證
     default_exit_temp_c: 165.8666667  # 使用者提供2025年均值
     default_flow_nm3_per_hr: 38968.2  # 使用者提供2025年均值
     default_exit_velocity_m_s: 13.77 # 使用者提供2025年均值（無 CEMS 流率時直接採用）
