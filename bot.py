@@ -409,6 +409,7 @@ def main():
     ap.add_argument("--force-group", action="store_true", help="同 --force，但直接發到群組（LINE_TO）")
     ap.add_argument("--demo", action="store_true", help="跑 tests/ 內所有情境（不連網、不發 LINE）")
     ap.add_argument("--scenario", help="跑指定情境檔")
+    ap.add_argument("--diagnose", action="store_true", help="印出 CEMS 資料集實際內容，找正確的管制編號")
     ap.add_argument("--maps", action="store_true", help="情境測試時也產生地圖")
     args = ap.parse_args()
     with open(args.config, encoding="utf-8") as f:
@@ -419,6 +420,9 @@ def main():
     for i, f in enumerate(cfg.get("facilities", [])):
         f.setdefault("id", f"f{i}")
 
+    if args.diagnose:
+        cems.diagnose(cfg, facilities_of(cfg))
+        return
     if args.demo or args.scenario:
         import glob
         paths = [args.scenario] if args.scenario else sorted(glob.glob(os.path.join(HERE, "tests", "*.yaml")))
