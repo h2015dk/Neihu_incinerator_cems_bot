@@ -89,9 +89,11 @@ def fetch_all_facilities(cfg: dict, facilities: list[dict]) -> dict[str, list[di
 
     for f in [f for f in pending if f.get("cno")]:
         try:
-            # API 回傳順序為新資料在前，只需最新一小時，1500 筆綽綽有餘。
+            # API 回傳順序為新資料在前，只需最新一小時。15 分鐘資料每小時約 180 筆
+            # （3 管道 × 約 15 項 × 4 筆），500 筆約涵蓋 2～3 小時，只需發 1 次請求，
+            # 可減少伺服器逾時重試的次數。
             rows = fetch_dataset(_ds(cfg), key, filters=f"cno,EQ,{f['cno']}",
-                                 page=500, max_rows=1500)
+                                 page=500, max_rows=500)
             ts = [t for t in (_parse_time(r.get("m_time")) for r in rows) if t]
             if ts and (datetime.now() - max(ts)).total_seconds() > 12 * 3600:
                 # 順序可能不是新到舊，擴大抓取，但設上限避免拖垮整個 job
