@@ -3,3 +3,4 @@ numpy>=1.24
 matplotlib>=3.7
 PyYAML>=6.0
 Pillow>=10.0
+pyproj>=3.5           # TWD97 TM2 座標轉換（環境部地形資料）

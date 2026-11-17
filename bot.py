@@ -389,7 +389,25 @@ def run_aermod(fac, src, wind, when, rxy, cfg, gauss_res):
     stk = aermod_run.Stack(q_ng_s=src.q_g_s, hs=src.hs, ts_k=src.ts_c + 273.15, vs=src.vs,
                            d=src.d, base_elev=0.0)
     terr, terr_note = None, "未納入（AERMOD 以平坦地形計算）"
-    if acfg.get("terrain", True):
+    tsrc = acfg.get("terrain_source", "moenv")
+    if acfg.get("terrain", True) and tsrc == "moenv":
+        try:
+            import moenv_terrain
+            mt = moenv_terrain.prepare(fac, [(r["lon"], r["lat"]) for r in cfg.get("receptors", [])],
+                                       half_km=acfg.get("terrain_grid_half_width_km", 6),
+                                       step=acfg.get("terrain_grid_step_m", 100))
+            terr = {"rou": mt["rou"], "sou": mt["sou"], "base": mt["base"], "key": mt["key"]}
+            g = mt["grid"]
+            grid = aermod_run.Grid(g["x0"], g["y0"], g["nx"], g["ny"], g["dx"], g["dy"],
+                                   discrete=mt["discrete"])
+            terr_note = mt["note"]
+            gauss_res = {**gauss_res, "Z": mt["Z"], "X": mt["ZX"], "Y": mt["ZY"]}
+            log.info("地形：%s（%d×%d 點）", terr_note, g["nx"], g["ny"])
+        except Exception as e:  # noqa: BLE001
+            terr = None
+            terr_note = "未納入（環境部地形資料讀取失敗，以平坦地形計算）"
+            log.warning("環境部地形資料讀取失敗，AERMOD 改以平坦地形計算：%s", str(e)[:300])
+    elif acfg.get("terrain", True):
         import aermap_run
         g, disc = aermap_run.grid_for(fac, cfg)
         try:

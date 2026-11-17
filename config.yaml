@@ -84,8 +84,9 @@ aermod:                          # EPA AERMOD（需先執行 aermod-setup 編譯
   grid_half_width_km: 8          # 計算範圍（會自動擴大到涵蓋敏感點）
   grid_step_m: 100
   site_char: {albedo: 0.18, bowen: 1.5, z0: 1.0}   # 地表特性（都市典型值）【待核】
-  terrain: true                  # 用 AERMAP 計算地形（結果快取，只算一次）
-  terrain_grid_step_m: 200       # 地形模式的受體間距（AERMAP 山丘高度計算較耗時）
+  terrain: true                  # AERMOD 納入地形
+  terrain_source: moenv          # moenv＝環境部空品模式支援中心地形資料（terrain_moenv/*.TER）｜aermap＝自行跑 AERMAP
+  terrain_grid_step_m: 100       # 受體間距（環境部資料為 100 m；用 aermap 時建議 200）
   terrain_grid_half_width_km: 6
   dem_step_deg: 0.0005           # 交給 AERMAP 的地形網格間距（約 50 m）
 
