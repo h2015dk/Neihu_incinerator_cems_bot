@@ -36,6 +36,14 @@ jobs:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
         run: python aermod_probe.py
 
+      - name: AERMET 測試（虛擬探空＋地面資料 → SFC／PFL）
+        continue-on-error: true
+        run: python aermet_run.py --test
+
+      - name: AERMOD 氣象比較（A：AERMET｜B：Python 計算）
+        continue-on-error: true
+        run: python aermod_met.py --test
+
       - name: 保存執行檔（供之後的每小時監控使用）
         uses: actions/cache/save@v4
         with:
@@ -50,4 +58,5 @@ jobs:
           path: |
             bin/
             aermod_smoke/
+            aermet_test/
           retention-days: 14
