@@ -82,19 +82,29 @@ class Grid:
     discrete: list = field(default_factory=list)   # 敏感點 [(x, y)]
 
 
-def write_inputs(work: str, stack: Stack, sfc: SfcHour, grid: Grid, lat: float, lon: float,
-                 urban_pop: float | None = None, title: str = "CEMS bot"):
+def write_inputs(work: str, stack: Stack, sfc: SfcHour | None, grid: Grid, lat: float,
+                 lon: float, urban_pop: float | None = None, title: str = "CEMS bot",
+                 raw: dict | None = None):
+    """raw＝{"sfc_header","sfc_line","pfl_lines"}：直接使用 AERMET 的輸出（做法 A）；
+    否則由 SfcHour 產生（做法 B／冒煙測試）。"""
     ns = "N" if lat >= 0 else "S"
     ew = "E" if lon >= 0 else "W"
     head = f"{abs(lat):9.3f}{ns}{abs(lon):9.3f}{ew}"
     with open(os.path.join(work, "met.sfc"), "w") as f:
-        f.write(f"{head}          UA_ID:    99999  SF_ID:    99999  OS_ID:    99999"
-                f"     VERSION: 24142  CEMSBOT\n")
-        f.write(sfc.line() + "\n")
+        if raw:
+            f.write(raw["sfc_header"] + "\n" + raw["sfc_line"] + "\n")
+        else:
+            f.write(f"{head}          UA_ID:    99999  SF_ID:    99999  OS_ID:    99999"
+                    f"     VERSION: 24142  CEMSBOT\n")
+            f.write(sfc.line() + "\n")
     with open(os.path.join(work, "met.pfl"), "w") as f:
-        f.write(f"{sfc.year % 100:2d} {sfc.month:2d} {sfc.day:2d} {sfc.hour:2d} "
-                f"{sfc.zref:7.1f} 1 {sfc.wd:7.1f} {sfc.ws:7.2f} {sfc.temp_k - 273.15:7.1f} "
-                f"{-99.0:7.1f} {-99.0:7.2f}\n")
+        if raw:
+            f.write("\n".join(raw["pfl_lines"]) + "\n")
+        else:
+            f.write(f"{sfc.year % 100:2d} {sfc.month:2d} {sfc.day:2d} {sfc.hour:2d} "
+                    f"{sfc.zref:7.1f} 1 {sfc.wd:7.1f} {sfc.ws:7.2f} {sfc.temp_k - 273.15:7.1f} "
+                    f"{-99.0:7.1f} {-99.0:7.2f}\n")
+    year = (2000 + int(raw["sfc_line"].split()[0])) if raw else sfc.year
     urban_co = f"   URBANOPT  {urban_pop:.0f}\n" if urban_pop else ""
     urban_so = "   URBANSRC  STK1\n" if urban_pop else ""
     disc = "".join(f"   DISCCART  {x:.1f} {y:.1f}\n" for x, y in grid.discrete)
@@ -121,8 +131,8 @@ RE STARTING
 ME STARTING
    SURFFILE  met.sfc
    PROFFILE  met.pfl
-   SURFDATA  99999 {sfc.year}
-   UAIRDATA  99999 {sfc.year}
+   SURFDATA  99999 {year}
+   UAIRDATA  99999 {year}
    PROFBASE  {stack.base_elev:.1f} METERS
 ME FINISHED
 
@@ -135,14 +145,15 @@ OU FINISHED
         f.write(inp)
 
 
-def run(stack: Stack, sfc: SfcHour, grid: Grid, lat: float, lon: float,
-        urban_pop: float | None = None, keep_dir: str | None = None) -> dict:
+def run(stack: Stack, sfc: SfcHour | None, grid: Grid, lat: float, lon: float,
+        urban_pop: float | None = None, keep_dir: str | None = None,
+        raw: dict | None = None) -> dict:
     """回傳 {"X","Y","C"（fg/m³，2D 陣列）,"discrete":[濃度…], "log": 尾段訊息}。"""
     if not os.path.exists(AERMOD_EXE):
         raise FileNotFoundError(f"找不到 AERMOD 執行檔：{AERMOD_EXE}")
     work = keep_dir or tempfile.mkdtemp(prefix="aermod_")
     os.makedirs(work, exist_ok=True)
-    write_inputs(work, stack, sfc, grid, lat, lon, urban_pop)
+    write_inputs(work, stack, sfc, grid, lat, lon, urban_pop, raw=raw)
     p = subprocess.run([AERMOD_EXE], cwd=work, capture_output=True, text=True, timeout=600)
     out_txt = ""
     if os.path.exists(os.path.join(work, "aermod.out")):
