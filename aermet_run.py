@@ -106,7 +106,7 @@ UPPERAIR
    EXTRACT    ua_ext.txt
    QAOUT      ua_qa.txt
    XDATES     {xd}
-   LOCATION   99999  {ll}  -8
+   LOCATION   99999  {ll}  -8  {elev:.0f}
 
 ONSITE
    DATA       os.dat
