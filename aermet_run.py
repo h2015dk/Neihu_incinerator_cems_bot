@@ -19,6 +19,7 @@ import openmeteo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AERMET_EXE = os.environ.get("AERMET_EXE", os.path.join(HERE, "bin", "aermet"))
+SCRIPT_VERSION = "2026-11-17d（FSL 單位欄位修正版）"
 MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
 
@@ -59,7 +60,8 @@ def write_fsl(path: str, h: dict, lat: float, lon: float, elev: float):
         out.append(f"{1:7d}{99999:7d}{99999:7d}{abs(lat):7.2f}{'N' if lat >= 0 else 'S'}"
                    f"{abs(lon):6.2f}{'E' if lon >= 0 else 'W'}{int(elev):6d}{99999:7d}")
         out.append(f"{2:7d}{99999:7d}{99999:7d}{99999:7d}{len(levels) + 4:7d}{99999:7d}{3:7d}")
-        out.append(f"{3:7d}{'':10}{'VSND':<4}{'':14}{99999:7d}{'':4}ms")
+        # FSL 第 3 型標頭：(I7,10X,A4,14X,I7,5X,A2)，風速單位放在第 48～49 欄
+        out.append(f"{3:7d}{'':10}{'VSND':<4}{'':14}{99999:7d}{'':5}ms")
         for typ, p, z, tt, td, wd, ws in levels:
             wd_i = 32767 if wd is None else int(round(wd)) % 360
             ws_i = 32767 if ws is None else int(round(ws * 10))   # ms 單位時為 0.1 m/s
@@ -199,6 +201,7 @@ def run(lat: float, lon: float, target: datetime, obs: dict | None = None, zref:
 
 def test():
     """在 GitHub Actions 上測試：抓 Open-Meteo，跑 AERMET，印出結果與訊息。"""
+    print("aermet_run.py 版本：", SCRIPT_VERSION)
     lat, lon = 25.06304, 121.60340
     target = datetime.now().replace(minute=0, second=0, microsecond=0)
     work = os.path.join(HERE, "aermet_test")
