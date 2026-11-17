@@ -19,7 +19,7 @@ import openmeteo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AERMET_EXE = os.environ.get("AERMET_EXE", os.path.join(HERE, "bin", "aermet"))
-SCRIPT_VERSION = "2026-11-17e（氣壓單位與找不到時段的診斷）"
+SCRIPT_VERSION = "2026-11-17f（年份四位數比對修正）"
 MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
 
@@ -176,8 +176,8 @@ def run(lat: float, lon: float, target: datetime, obs: dict | None = None, zref:
 
     def _key(ln):
         v = ln.split()
-        try:
-            return int(v[0]), int(v[1]), int(v[2]), int(v[4])
+        try:  # AERMET 26135 的年份為四位數（2026），統一取後兩位比對
+            return int(v[0]) % 100, int(v[1]), int(v[2]), int(v[4])
         except (ValueError, IndexError):
             return None
 
@@ -195,7 +195,7 @@ def run(lat: float, lon: float, target: datetime, obs: dict | None = None, zref:
         for ln in f.read().splitlines():
             v = ln.split()
             try:
-                if len(v) >= 4 and (int(v[0]), int(v[1]), int(v[2]), int(v[3])) == key:
+                if len(v) >= 4 and (int(v[0]) % 100, int(v[1]), int(v[2]), int(v[3])) == key:
                     pfl.append(ln)
             except ValueError:
                 continue

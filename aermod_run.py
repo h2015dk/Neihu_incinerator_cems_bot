@@ -104,7 +104,11 @@ def write_inputs(work: str, stack: Stack, sfc: SfcHour | None, grid: Grid, lat: 
             f.write(f"{sfc.year % 100:2d} {sfc.month:2d} {sfc.day:2d} {sfc.hour:2d} "
                     f"{sfc.zref:7.1f} 1 {sfc.wd:7.1f} {sfc.ws:7.2f} {sfc.temp_k - 273.15:7.1f} "
                     f"{-99.0:7.1f} {-99.0:7.2f}\n")
-    year = (2000 + int(raw["sfc_line"].split()[0])) if raw else sfc.year
+    if raw:
+        y = int(raw["sfc_line"].split()[0])
+        year = y if y > 100 else 2000 + y      # AERMET 新版為四位數年份
+    else:
+        year = sfc.year
     urban_co = f"   URBANOPT  {urban_pop:.0f}\n" if urban_pop else ""
     urban_so = "   URBANSRC  STK1\n" if urban_pop else ""
     disc = "".join(f"   DISCCART  {x:.1f} {y:.1f}\n" for x, y in grid.discrete)
