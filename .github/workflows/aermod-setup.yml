@@ -1,0 +1,52 @@
+name: aermod-setup
+
+# AERMOD 第 1～2 步：編譯 EPA 程式、冒煙測試、檢查 AERMET 所需資料是否抓得到。
+# 手動執行：Actions → aermod-setup → Run workflow。不影響每小時的監控機器人。
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Taipei
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安裝 gfortran
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gfortran
+
+      - run: pip install -r requirements.txt
+
+      - name: 下載並編譯 AERMOD／AERMET／AERMAP（EPA 原始碼）
+        run: python aermod_build.py
+
+      - name: AERMOD 冒煙測試（固定氣象條件跑一小時）
+        run: python aermod_run.py --smoke
+
+      - name: 檢查 AERMET 所需資料（雲量、日射量、板橋探空）
+        env:
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+        run: python aermod_probe.py
+
+      - name: 保存執行檔（供之後的每小時監控使用）
+        uses: actions/cache/save@v4
+        with:
+          path: bin
+          key: aermod-bin-${{ hashFiles('bin/VERSIONS.txt') }}-${{ github.run_id }}
+
+      - name: 上傳執行檔與測試結果（可下載檢查）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aermod-setup-${{ github.run_id }}
+          path: |
+            bin/
+            aermod_smoke/
+          retention-days: 14

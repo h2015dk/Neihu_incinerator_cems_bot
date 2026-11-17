@@ -42,6 +42,12 @@ jobs:
           key: bot-state-${{ github.run_id }}
           restore-keys: bot-state-
 
+      - name: 地形圖磚快取（地形不會變，下載一次後重複使用）
+        uses: actions/cache@v4
+        with:
+          path: terrain_cache
+          key: terrain-tiles-v1
+
       - name: 執行機器人
         env:
           MOENV_API_KEY: ${{ secrets.MOENV_API_KEY }}
