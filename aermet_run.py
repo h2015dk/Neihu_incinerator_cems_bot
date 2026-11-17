@@ -19,7 +19,7 @@ import openmeteo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AERMET_EXE = os.environ.get("AERMET_EXE", os.path.join(HERE, "bin", "aermet"))
-SCRIPT_VERSION = "2026-11-17d（FSL 單位欄位修正版）"
+SCRIPT_VERSION = "2026-11-17e（氣壓單位與找不到時段的診斷）"
 MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
 
@@ -88,6 +88,8 @@ def write_onsite(path: str, h: dict, upto: datetime, obs: dict | None):
         miss = [99.0, 999.0, 99.0, 999.0, 9999.0, 99.0, 9999.0]
         vals = [m if v is None else v for v, m in zip(vals, miss)]
         cc = vals[5] if vals[5] == 99.0 else round(vals[5] / 10)   # % → 十分位
+        # AERMET ONSITE 的氣壓以 0.1 hPa 為單位（以 hPa 輸入時，空氣密度會被算成 0.12，W75 警告）
+        vals[4] = 99999.0 if vals[4] == 9999.0 else vals[4] * 10
         rows.append(f"{d.year % 100:02d} {d.month:02d} {d.day:02d} {hr:02d} "
                     f"{vals[0]:6.2f} {vals[1]:6.1f} {vals[2]:6.1f} {vals[3]:6.1f} "
                     f"{vals[4]:7.1f} {cc:5.1f} {vals[6]:7.1f}")
@@ -181,7 +183,10 @@ def run(lat: float, lon: float, target: datetime, obs: dict | None = None, zref:
 
     sfc_line = next((ln for ln in data if _key(ln) == key), None)
     if sfc_line is None:
-        raise RuntimeError(f"AERMET 輸出中找不到 {d1:%Y/%m/%d} {hr1} 時\n{msg}")
+        tail = "\n".join(data[-8:])
+        raise RuntimeError(f"AERMET 輸出中找不到 {d1:%Y/%m/%d} {hr1} 時（比對鍵 {key}）\n"
+                           f"met.sfc 共 {len(data)} 筆資料，最後 8 筆：\n{tail}\n"
+                           f"---- 標頭 ----\n{header}")
     vals = sfc_line.split()
     if float(vals[6]) < -9 or float(vals[11]) < -99000 or float(vals[15]) < -9:
         raise RuntimeError(f"AERMET 該小時為缺值：{sfc_line}\n{msg}")
