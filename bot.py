@@ -386,16 +386,30 @@ def run_aermod(fac, src, wind, when, rxy, cfg, gauss_res):
     site = acfg.get("site_char", {"albedo": 0.18, "bowen": 1.5, "z0": 1.0})
     met = aermod_met.get_met(lat0, lon0, target, obs=obs, zref=acfg.get("wind_height_m", 10.0),
                              site=site, prefer=acfg.get("met", "aermet"))
-    half = acfg.get("grid_half_width_km", 8) * 1000
-    need = max([math.hypot(x, y) for x, y in rxy] + [0]) + 1000
-    half = max(half, need)
-    step = acfg.get("grid_step_m", 100)
-    n = int(2 * half / step) + 1
     stk = aermod_run.Stack(q_ng_s=src.q_g_s, hs=src.hs, ts_k=src.ts_c + 273.15, vs=src.vs,
                            d=src.d, base_elev=0.0)
-    grid = aermod_run.Grid(-half, -half, n, n, step, step, discrete=rxy)
+    terr, terr_note = None, "未納入（AERMOD 以平坦地形計算）"
+    if acfg.get("terrain", True):
+        import aermap_run
+        g, disc = aermap_run.grid_for(fac, cfg)
+        try:
+            terr = aermap_run.run(fac, g, disc, dem_step=acfg.get("dem_step_deg", 0.0005))
+            grid = aermod_run.Grid(g["x0"], g["y0"], g["nx"], g["ny"], g["dx"], g["dy"],
+                                   discrete=disc)
+            terr_note = f"已納入（AERMAP），煙囪基地標高 {terr['base']:.0f} m"
+            log.info("AERMAP 地形：%s（快取鍵 %s）", terr_note, terr["key"])
+        except Exception as e:  # noqa: BLE001
+            terr = None
+            terr_note = "未納入（AERMAP 失敗，以平坦地形計算）"
+            log.warning("AERMAP 失敗，AERMOD 改以平坦地形計算：%s", str(e)[:300])
+    if terr is None:
+        half = acfg.get("grid_half_width_km", 8) * 1000
+        half = max(half, max([math.hypot(x, y) for x, y in rxy] + [0]) + 1000)
+        step = acfg.get("grid_step_m", 100)
+        n = int(2 * half / step) + 1
+        grid = aermod_run.Grid(-half, -half, n, n, step, step, discrete=rxy)
     out = aermod_run.run(stk, met["sfc"], grid, lat0, lon0,
-                         urban_pop=acfg.get("urban_population"), raw=met["raw"])
+                         urban_pop=acfg.get("urban_population"), raw=met["raw"], terr=terr)
     C = out["C"]
     i = np.unravel_index(np.argmax(C), C.shape)
     # 從 SFC 取出邊界層參數供地圖說明
@@ -408,7 +422,9 @@ def run_aermod(fac, src, wind, when, rxy, cfg, gauss_res):
            "model": "AERMOD", "met_method": met["method"], "met_note": met["note"],
            "H": float(v[5]), "ustar": float(v[6]), "zic": float(v[9]), "zim": float(v[10]),
            "L": float(v[11]), "sun_alt": gauss_res.get("sun_alt"),
-           "Z": None, "stack_base_m": None, "calm": gauss_res.get("calm")}
+           "Z": gauss_res.get("Z"), "ZX": gauss_res.get("X"), "ZY": gauss_res.get("Y"),
+           "stack_base_m": terr["base"] if terr else None, "calm": gauss_res.get("calm"),
+           "terrain_note": terr_note}
     log.info("AERMOD 完成｜氣象：%s｜L=%s m，zic=%s m｜最大 %.1f fg/m³", met["method"], v[11],
              v[9], res["max"])
     return res

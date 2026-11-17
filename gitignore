@@ -8,3 +8,5 @@ aermod_smoke/
 build_tmp/
 aermet_test/
 om_cache/
+aermap_cache/
+aermap_test/

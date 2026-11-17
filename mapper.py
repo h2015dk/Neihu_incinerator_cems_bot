@@ -172,7 +172,7 @@ def _stab(res: dict) -> str:
                 f"邊界層：{state}，Monin-Obukhov 長度 {res['L']:.0f} m，"
                 f"摩擦速度 {res['ustar']:.2f} m/s，對流混合層 {zic}，機械混合層 {res['zim']:.0f} m\n"
                 f"氣象資料：Open-Meteo 模式值（雲量、日射、高空剖面），風與氣溫為實測\n"
-                f"地形：未納入（AERMOD 以平坦地形計算）\n")
+                f"地形：{res.get('terrain_note', '未納入')}\n")
     cls = res.get("cls")
     if not cls:
         return ""
@@ -257,10 +257,15 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
                 alpha=map_cfg.get("top_alpha", 0.85), zorder=2.5)
     ax.contour(MX, MY, C, levels=sorted(levels), colors="dimgray", linewidths=0.7, zorder=3)
     Z = res.get("Z")
+    if res.get("ZX") is not None and Z is not None:  # 地形網格與濃度網格不同（AERMOD）
+        zlon, zlat = xy_to_lonlat(res["ZX"], res["ZY"], lat0, lon0)
+        ZMX, ZMY = to_merc(zlon, zlat)
+    else:
+        ZMX, ZMY = MX, MY
     if Z is not None and map_cfg.get("terrain_contours", True) and float(np.nanmax(Z)) > 50:
         step = map_cfg.get("terrain_contour_step_m", 50)
         zl = np.arange(step, float(np.nanmax(Z)) + step, step)
-        cs = ax.contour(MX, MY, Z, levels=zl, colors="saddlebrown", linewidths=0.5, alpha=0.6,
+        cs = ax.contour(ZMX, ZMY, Z, levels=zl, colors="saddlebrown", linewidths=0.5, alpha=0.6,
                         zorder=2.7)
         ax.clabel(cs, levels=zl[1::2] if len(zl) > 4 else zl, fontsize=6, fmt="%d m",
                   inline=True)

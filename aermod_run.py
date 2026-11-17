@@ -84,7 +84,7 @@ class Grid:
 
 def write_inputs(work: str, stack: Stack, sfc: SfcHour | None, grid: Grid, lat: float,
                  lon: float, urban_pop: float | None = None, title: str = "CEMS bot",
-                 raw: dict | None = None):
+                 raw: dict | None = None, terr: dict | None = None):
     """raw＝{"sfc_header","sfc_line","pfl_lines"}：直接使用 AERMET 的輸出（做法 A）；
     否則由 SfcHour 產生（做法 B／冒煙測試）。"""
     ns = "N" if lat >= 0 else "S"
@@ -112,6 +112,21 @@ def write_inputs(work: str, stack: Stack, sfc: SfcHour | None, grid: Grid, lat: 
     urban_co = f"   URBANOPT  {urban_pop:.0f}\n" if urban_pop else ""
     urban_so = "   URBANSRC  STK1\n" if urban_pop else ""
     disc = "".join(f"   DISCCART  {x:.1f} {y:.1f}\n" for x, y in grid.discrete)
+    # 地形（AERMAP 結果）：以 INCLUDED 引入受體與污染源高程檔
+    if terr:
+        with open(os.path.join(work, "aermap.rou"), "w") as f:
+            f.write(terr["rou"])
+        with open(os.path.join(work, "aermap.sou"), "w") as f:
+            f.write(terr["sou"])
+        stack.base_elev = terr["base"]
+        so_loc = "   INCLUDED  aermap.sou\n"
+        re_block = "   INCLUDED  aermap.rou\n"
+    else:
+        so_loc = f"   LOCATION  STK1 POINT 0.0 0.0 {stack.base_elev:.1f}\n"
+        re_block = (f"   GRIDCART  G1 STA\n"
+                    f"             G1 XYINC {grid.x0:.1f} {grid.nx} {grid.dx:.1f} "
+                    f"{grid.y0:.1f} {grid.ny} {grid.dy:.1f}\n"
+                    f"             G1 END\n{disc}")
     inp = f"""CO STARTING
    TITLEONE  {title[:60]}
    MODELOPT  DFAULT CONC
@@ -121,16 +136,12 @@ def write_inputs(work: str, stack: Stack, sfc: SfcHour | None, grid: Grid, lat: 
 CO FINISHED
 
 SO STARTING
-   LOCATION  STK1 POINT 0.0 0.0 {stack.base_elev:.1f}
-   SRCPARAM  STK1 {stack.q_ng_s:.6g} {stack.hs:.2f} {stack.ts_k:.2f} {stack.vs:.2f} {stack.d:.3f}
+{so_loc}   SRCPARAM  STK1 {stack.q_ng_s:.6g} {stack.hs:.2f} {stack.ts_k:.2f} {stack.vs:.2f} {stack.d:.3f}
 {urban_so}   SRCGROUP  ALL
 SO FINISHED
 
 RE STARTING
-   GRIDCART  G1 STA
-             G1 XYINC {grid.x0:.1f} {grid.nx} {grid.dx:.1f} {grid.y0:.1f} {grid.ny} {grid.dy:.1f}
-             G1 END
-{disc}RE FINISHED
+{re_block}RE FINISHED
 
 ME STARTING
    SURFFILE  met.sfc
@@ -151,13 +162,13 @@ OU FINISHED
 
 def run(stack: Stack, sfc: SfcHour | None, grid: Grid, lat: float, lon: float,
         urban_pop: float | None = None, keep_dir: str | None = None,
-        raw: dict | None = None) -> dict:
+        raw: dict | None = None, terr: dict | None = None) -> dict:
     """回傳 {"X","Y","C"（fg/m³，2D 陣列）,"discrete":[濃度…], "log": 尾段訊息}。"""
     if not os.path.exists(AERMOD_EXE):
         raise FileNotFoundError(f"找不到 AERMOD 執行檔：{AERMOD_EXE}")
     work = keep_dir or tempfile.mkdtemp(prefix="aermod_")
     os.makedirs(work, exist_ok=True)
-    write_inputs(work, stack, sfc, grid, lat, lon, urban_pop, raw=raw)
+    write_inputs(work, stack, sfc, grid, lat, lon, urban_pop, raw=raw, terr=terr)
     p = subprocess.run([AERMOD_EXE], cwd=work, capture_output=True, text=True, timeout=600)
     out_txt = ""
     if os.path.exists(os.path.join(work, "aermod.out")):
