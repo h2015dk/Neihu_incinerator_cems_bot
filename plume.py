@@ -15,16 +15,49 @@ G = 9.81
 P_EXP = {"A": 0.15, "B": 0.15, "C": 0.20, "D": 0.25, "E": 0.30, "F": 0.30}  # 都市風速剖面指數
 
 
-def stability_class(u10: float, hour: int, night_cloudy: bool = False) -> str:
-    day = 6 <= hour < 18
-    if day:  # 中等日照
-        if u10 < 2: return "B"
-        if u10 < 5: return "C" if u10 >= 3 else "B"
-        return "C" if u10 < 6 else "D"
-    if night_cloudy:
-        return "E" if u10 < 3 else "D"
-    if u10 < 3: return "F"
-    return "E" if u10 < 5 else "D"
+def solar_elevation(when, lat: float, lon: float, tz_hours: float = 8.0) -> float:
+    """太陽仰角（度）。NOAA 近似公式，誤差約 1° 以內；when 為當地時間（臺灣 UTC+8）。"""
+    doy = when.timetuple().tm_yday
+    hour = when.hour + when.minute / 60 + when.second / 3600
+    g = 2 * math.pi / 365 * (doy - 1 + (hour - 12) / 24)
+    decl = (0.006918 - 0.399912 * math.cos(g) + 0.070257 * math.sin(g)
+            - 0.006758 * math.cos(2 * g) + 0.000907 * math.sin(2 * g)
+            - 0.002697 * math.cos(3 * g) + 0.00148 * math.sin(3 * g))
+    eqtime = 229.18 * (0.000075 + 0.001868 * math.cos(g) - 0.032077 * math.sin(g)
+                       - 0.014615 * math.cos(2 * g) - 0.040849 * math.sin(2 * g))
+    tst = hour * 60 + eqtime + 4 * lon - 60 * tz_hours          # 真太陽時（分）
+    ha = math.radians(tst / 4 - 180)
+    la = math.radians(lat)
+    cosz = math.sin(la) * math.sin(decl) + math.cos(la) * math.cos(decl) * math.cos(ha)
+    return 90 - math.degrees(math.acos(max(-1.0, min(1.0, cosz))))
+
+
+def stability_class(u10: float, hour: int, night_cloudy: bool = False,
+                    sun_alt: float | None = None) -> str:
+    """Turner 法簡化（無雲量資料）。
+    sun_alt 有值時依太陽仰角判斷：≤0° 夜間；0～15° 日出日落過渡期，視為中性 D；
+    15～35° 弱日照；35～60° 中等日照；>60° 強日照。sun_alt 為 None 時沿用舊的 6～18 點判斷。"""
+    if sun_alt is None:
+        sun_alt = 45.0 if 6 <= hour < 18 else -10.0
+    if sun_alt <= 0:  # 夜間
+        if night_cloudy:
+            return "E" if u10 < 3 else "D"
+        if u10 < 3: return "F"
+        return "E" if u10 < 5 else "D"
+    if sun_alt < 15:  # 日出後、日落前的過渡時段
+        return "D"
+    if sun_alt > 60:  # 強日照
+        if u10 < 2: return "A"
+        if u10 < 5: return "B"
+        return "C"
+    if sun_alt >= 35:  # 中等日照
+        if u10 < 3: return "B"
+        if u10 < 6: return "C"
+        return "D"
+    # 弱日照
+    if u10 < 2: return "B"
+    if u10 < 5: return "C"
+    return "D"
 
 
 def sigmas_urban(x: np.ndarray, cls: str):
@@ -61,12 +94,20 @@ class Source:
 def run(src: Source, ws10: float, wd_from: float, hour: int, ta_c: float = 25.0,
         anemo_h: float = 10.0, half_km: float = 15.0, step: float = 100.0,
         night_cloudy: bool = False, min_ws: float = 0.5,
-        receptors_xy: list[tuple[float, float]] | None = None) -> dict:
-    """receptors_xy：敏感點相對煙囪的 (東, 北) 公尺座標；格點範圍會自動擴大到涵蓋它們。"""
+        receptors_xy: list[tuple[float, float]] | None = None,
+        when=None, lat: float | None = None, lon: float | None = None,
+        terrain_fn=None, stack_base_m: float | None = None, f_horizontal=None) -> dict:
+    """receptors_xy：敏感點相對煙囪的 (東, 北) 公尺座標；格點範圍會自動擴大到涵蓋它們。
+    terrain_fn(x, y)：給相對煙囪的 (東, 北) 公尺座標，回傳地面標高（m）；None＝平坦地形。
+    地形處理參考 AERMOD 的雙狀態概念（簡化版）：
+      水平狀態：煙流維持原本的海拔高度，地面升高多少，煙離地面就少多少（最低 0）
+      地形跟隨：煙流隨地形起伏，離地高度不變
+      地面濃度＝f × 水平狀態＋(1－f) × 地形跟隨；f 依穩定度取值（越穩定，越傾向水平撞山）"""
     receptors_xy = receptors_xy or []
     need = max([math.hypot(x, y) for x, y in receptors_xy] + [0]) / 1000 + 2
     half_km = max(half_km, need)
-    cls = stability_class(ws10, hour, night_cloudy)
+    sun_alt = solar_elevation(when, lat, lon) if when is not None and lat is not None else None
+    cls = stability_class(ws10, hour, night_cloudy, sun_alt)
     u10 = max(ws10, min_ws)
     uh = u10 * (src.hs / anemo_h) ** P_EXP[cls]
     dh = plume_rise(src.vs, src.d, src.ts_c + 273.15, ta_c + 273.15, uh, cls)
@@ -78,15 +119,31 @@ def run(src: Source, ws10: float, wd_from: float, hour: int, ta_c: float = 25.0,
     to_rad = math.radians((wd_from + 180) % 360)  # 煙往哪吹（氣象風向是「從哪來」）
     ex, ey = math.sin(to_rad), math.cos(to_rad)
 
+    fh = (f_horizontal or {"A": 0.5, "B": 0.5, "C": 0.5, "D": 0.5, "E": 0.6, "F": 0.7})[cls]
+    zs = None
+    if terrain_fn is not None:
+        zs = stack_base_m if stack_base_m is not None else float(terrain_fn(np.array([0.0]),
+                                                                           np.array([0.0]))[0])
+
     def conc(x, y):
         xd = x * ex + y * ey                 # 下風距離
         yc = -x * ey + y * ex                # 側風距離
         sy, sz = sigmas_urban(xd, cls)
-        c = (src.q_g_s / (2 * math.pi * uh * sy * sz) * np.exp(-yc ** 2 / (2 * sy ** 2))
-             * 2 * np.exp(-he ** 2 / (2 * sz ** 2)))
+        base = src.q_g_s / (2 * math.pi * uh * sy * sz) * np.exp(-yc ** 2 / (2 * sy ** 2))
+
+        def vert(h):  # 地面反射的垂直項
+            return 2 * np.exp(-h ** 2 / (2 * sz ** 2))
+
+        if terrain_fn is None:
+            c = base * vert(he)
+        else:
+            dz = terrain_fn(x, y) - zs       # 受體地面相對煙囪基地的高差
+            h_horiz = np.maximum(he - dz, 0.0)
+            c = base * (fh * vert(h_horiz) + (1 - fh) * vert(he))
         return np.where(xd > 0, c, 0.0), xd
 
     c, _ = conc(X, Y)
+    Z = terrain_fn(X, Y) if terrain_fn is not None else None
     rec = []
     for x, y in receptors_xy:
         cr, xdr = conc(np.array([x]), np.array([y]))
@@ -95,7 +152,8 @@ def run(src: Source, ws10: float, wd_from: float, hour: int, ta_c: float = 25.0,
     return {"X": X, "Y": Y, "C": c, "cls": cls, "u_stack": uh, "dh": dh, "he": he,
             "max": float(c[i]), "max_xy": (float(X[i]), float(Y[i])),
             "max_dist_m": float(math.hypot(X[i], Y[i])), "calm": ws10 < min_ws,
-            "receptors": rec}
+            "receptors": rec, "sun_alt": sun_alt, "Z": Z, "stack_base_m": zs,
+            "f_horizontal": fh if terrain_fn is not None else None}
 
 
 def xy_to_lonlat(x, y, lat0, lon0):

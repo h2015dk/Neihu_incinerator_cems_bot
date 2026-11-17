@@ -160,6 +160,25 @@ def edge_marker(ax, x, y, fr, label):
                 bbox=dict(fc="white", ec="black", lw=0.6, alpha=0.85))
 
 
+STAB_DESC = {"A": "極不穩定", "B": "不穩定", "C": "稍不穩定", "D": "中性", "E": "稍穩定", "F": "穩定"}
+
+
+def _stab(res: dict) -> str:
+    """說明框中的大氣穩定度一行（結尾含換行）。"""
+    cls = res.get("cls")
+    if not cls:
+        return ""
+    alt = res.get("sun_alt")
+    when = "" if alt is None else (f"，太陽仰角 {alt:.0f}°" + ("，夜間" if alt <= 0 else ""))
+    line = f"大氣穩定度：{cls}（{STAB_DESC.get(cls, '')}{when}）\n"
+    if res.get("Z") is not None:
+        line += (f"地形：已納入（AWS Terrain Tiles／SRTM），煙囪基地標高 {res['stack_base_m']:.0f} m，"
+                 f"水平狀態權重 {res['f_horizontal']:.1f}\n")
+    else:
+        line += "地形：未納入（平坦地形）\n"
+    return line
+
+
 # ---------- 主繪圖 ----------
 def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_png: str,
          unit_label: str = "fg I-TEQ/m³", receptors: list[dict] | None = None,
@@ -229,6 +248,14 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
     ax.contourf(MX, MY, C, levels=lv[-2:], colors=[cmap(cmap.N - 1)],
                 alpha=map_cfg.get("top_alpha", 0.85), zorder=2.5)
     ax.contour(MX, MY, C, levels=sorted(levels), colors="dimgray", linewidths=0.7, zorder=3)
+    Z = res.get("Z")
+    if Z is not None and map_cfg.get("terrain_contours", True) and float(np.nanmax(Z)) > 50:
+        step = map_cfg.get("terrain_contour_step_m", 50)
+        zl = np.arange(step, float(np.nanmax(Z)) + step, step)
+        cs = ax.contour(MX, MY, Z, levels=zl, colors="saddlebrown", linewidths=0.5, alpha=0.6,
+                        zorder=2.7)
+        ax.clabel(cs, levels=zl[1::2] if len(zl) > 4 else zl, fontsize=6, fmt="%d m",
+                  inline=True)
     from matplotlib.cm import ScalarMappable
     cb = fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.75, pad=0.02)
     cb.set_ticks(sorted(levels))
@@ -296,12 +323,14 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
                     f"資料來源：{wind.get('src_label', '')}\n"
                     f"測站：\n{sites}\n"
                     f"風向一致性：{wind['consistency']:.2f}（1＝各站完全一致）\n"
+                    f"{_stab(res)}"
                     f"觀測時間：{wind['time']}")
         else:
             info = (f"風從 {wind['wd']:.0f}°（{compass(wind['wd'])}）來，{wind['ws']:.1f} m/s\n"
                     f"資料來源：{wind.get('src_label', '')}\n"
                     f"測站：{wind.get('site', wind['name'])}\n"
                     f"測站距焚化廠煙囪：{wind['dist_km']:.1f} km\n"
+                    f"{_stab(res)}"
                     f"觀測時間：{wind['time']}")
         wind_info = info
 

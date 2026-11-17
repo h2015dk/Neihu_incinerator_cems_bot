@@ -1,0 +1,8 @@
+__pycache__/
+out/
+state.json
+bot.log
+terrain_cache/
+bin/
+aermod_smoke/
+build_tmp/

@@ -322,15 +322,34 @@ def step(fac, now, obs, wind, fc, st, cfg):
 
 
 # ======================== 地圖 ========================
-def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True):
+def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True, when=None):
+    """when：判斷日夜（大氣穩定度）用的時間；正式執行用「現在」，情境測試用情境時間。"""
     dcfg, receptors = cfg["dispersion"], cfg.get("receptors", [])
     lat0, lon0 = fac["stack_lat"], fac["stack_lon"]
     rxy = [plume.lonlat_to_xy(r["lon"], r["lat"], lat0, lon0) for r in receptors]
     src, _ = build_source(flues, fac, cfg)
+    tfn, tcfg = None, cfg.get("terrain", {})
+    if tcfg.get("enabled", False):
+        try:
+            import terrain as terrainmod
+            need = max([math.hypot(x, y) for x, y in rxy] + [0]) / 1000 + 2
+            ter = terrainmod.Terrain(lat0, lon0, max(dcfg["grid_half_width_km"], need),
+                                     zoom=tcfg.get("zoom", 12))
+
+            def tfn(x, y):
+                lo, la = plume.xy_to_lonlat(x, y, lat0, lon0)
+                return ter(lo, la)
+            log.info("地形：已載入（%d 張圖磚）", ter.n_tiles)
+        except Exception as e:  # noqa: BLE001
+            tfn = None
+            log.warning("地形：載入失敗，本次以平坦地形計算：%s", e)
     res = plume.run(src, wind["ws"], wind["wd"], t_ev.hour, ta_c=wind.get("temp_c") or 25.0,
                     anemo_h=dcfg["anemometer_height_m"], half_km=dcfg["grid_half_width_km"],
                     step=dcfg["grid_step_m"], night_cloudy=dcfg["night_cloudy"],
-                    min_ws=dcfg["min_wind_m_s"], receptors_xy=rxy)
+                    min_ws=dcfg["min_wind_m_s"], receptors_xy=rxy,
+                    when=when or datetime.now(), lat=lat0, lon=lon0,
+                    terrain_fn=tfn, stack_base_m=fac.get("stack_base_elev_m"),
+                    f_horizontal=tcfg.get("f_horizontal"))
     res["C"] = res["C"] * 1e6
     res["max"] *= 1e6
     os.makedirs(out_dir, exist_ok=True)
@@ -482,7 +501,8 @@ def run_scenario(path, cfg, make_maps=False):
             print("   └────")
             if attach and make_maps:
                 png, _, _ = render_map(fac, [fake_flue(t, etype=etype)], wind, t, cfg,
-                                       os.path.join(HERE, "out", "scenario"), upload=False)
+                                       os.path.join(HERE, "out", "scenario"), upload=False,
+                                       when=now)
                 print(f"   地圖：{png}")
 
 

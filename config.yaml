@@ -76,6 +76,11 @@ dispersion:
   min_wind_m_s: 0.5
   contour_levels_fg_teq_m3: [1, 10, 50, 100, 500, 1000]   # fg I-TEQ/m³
 
+terrain:                         # 地形（AWS Terrain Tiles，免金鑰，下載一次後快取）
+  enabled: true
+  zoom: 12                       # 圖磚層級；12 約 34 m 解析度
+  # f_horizontal: {A: 0.5, B: 0.5, C: 0.5, D: 0.5, E: 0.6, F: 0.7}  # 各穩定度的「水平撞山」權重，可自訂
+
 map:
   basemap: osm                   # osm（中文地名）| carto_light（淡色、英文地名）| none
   basemap_fade: 0.25             # 底圖調淡比例 0~1
@@ -88,6 +93,8 @@ map:
     x_frac: 0.10
     y_frac: 0.10
   # center 或 anchor 留空 → 改為依煙囪、敏感點、濃度範圍自動決定圖框
+  terrain_contours: true         # 地圖疊加地形等高線
+  terrain_contour_step_m: 50     # 等高線間距
   include_wind_stations: true    # 風向測站一定畫進圖內；在框外時以中心點等比例放大圖框
                                  # （放大後 anchor 敏感點不再固定在 10%／10%，會往內移）
 
