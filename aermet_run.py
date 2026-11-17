@@ -163,19 +163,35 @@ def run(lat: float, lon: float, target: datetime, obs: dict | None = None, zref:
         raise RuntimeError(f"AERMET 沒有產生 met.sfc（代碼 {p.returncode}）\n"
                            f"{p.stdout[-2000:]}\n{p.stderr[-2000:]}{msg}")
     with open(sfc_path) as f:
-        lines = f.read().splitlines()
+        lines = [ln for ln in f.read().splitlines() if ln.strip()]
+    if len(lines) < 2:
+        raise RuntimeError(f"AERMET 產生的 met.sfc 沒有資料（共 {len(lines)} 行）\n"
+                           f"{p.stdout[-1500:]}{msg}")
     header, data = lines[0], lines[1:]
     key = (d1.year % 100, d1.month, d1.day, hr1)
-    sfc_line = next((ln for ln in data if tuple(int(v) for v in ln.split()[:3]) + (
-        int(ln.split()[4]),) == key), None)
+
+    def _key(ln):
+        v = ln.split()
+        try:
+            return int(v[0]), int(v[1]), int(v[2]), int(v[4])
+        except (ValueError, IndexError):
+            return None
+
+    sfc_line = next((ln for ln in data if _key(ln) == key), None)
     if sfc_line is None:
         raise RuntimeError(f"AERMET 輸出中找不到 {d1:%Y/%m/%d} {hr1} 時\n{msg}")
     vals = sfc_line.split()
     if float(vals[6]) < -9 or float(vals[11]) < -99000 or float(vals[15]) < -9:
         raise RuntimeError(f"AERMET 該小時為缺值：{sfc_line}\n{msg}")
     with open(pfl_path) as f:
-        pfl = [ln for ln in f.read().splitlines()
-               if ln.split() and tuple(int(v) for v in ln.split()[:4]) == key]
+        pfl = []
+        for ln in f.read().splitlines():
+            v = ln.split()
+            try:
+                if len(v) >= 4 and (int(v[0]), int(v[1]), int(v[2]), int(v[3])) == key:
+                    pfl.append(ln)
+            except ValueError:
+                continue
     if not keep_dir:
         shutil.rmtree(work, ignore_errors=True)
     return {"sfc_header": header, "sfc_line": sfc_line, "pfl_lines": pfl, "messages": msg}
@@ -187,6 +203,7 @@ def test():
     target = datetime.now().replace(minute=0, second=0, microsecond=0)
     work = os.path.join(HERE, "aermet_test")
     try:
+        shutil.rmtree(work, ignore_errors=True)
         res = run(lat, lon, target, keep_dir=work)
         print("AERMET 測試成功")
         print("SFC 標頭：", res["sfc_header"])
@@ -194,7 +211,13 @@ def test():
         print("PFL：", *res["pfl_lines"], sep="\n  ")
     except Exception as e:  # noqa: BLE001
         print("AERMET 測試失敗：", e)
-        for fn in ("aermet.inp", "os.dat", "ua.fsl"):
+        for fn in ("aermet.msg", "aermet.rpt", "met.sfc"):
+            fp = os.path.join(work, fn)
+            if os.path.exists(fp):
+                with open(fp, errors="replace") as f:
+                    txt = f.read().splitlines()
+                print(f"\n---- {fn}（最後 60 行，共 {len(txt)} 行）----", *txt[-60:], sep="\n")
+        for fn in ("aermet.inp",):
             fp = os.path.join(work, fn)
             if os.path.exists(fp):
                 with open(fp) as f:
