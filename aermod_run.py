@@ -148,14 +148,28 @@ def run(stack: Stack, sfc: SfcHour, grid: Grid, lat: float, lon: float,
     xs, ys, cs = [], [], []
     with open(plot) as f:
         for ln in f:
-            if ln.startswith("*") or not ln.strip():
+            s = ln.strip()
+            if not s or s.startswith("*"):
                 continue
-            v = ln.split()
-            xs.append(float(v[0]))
-            ys.append(float(v[1]))
-            cs.append(float(v[2]))
+            v = s.replace("D", "E").split()
+            try:
+                xs.append(float(v[0]))
+                ys.append(float(v[1]))
+                cs.append(float(v[2]))
+            except (ValueError, IndexError):
+                continue
     xs, ys, cs = np.array(xs), np.array(ys), np.array(cs)
     n_grid = grid.nx * grid.ny
+    if len(xs) < n_grid:
+        # 讀不到格點資料：印出輸出檔內容，方便判斷是哪個版本差異造成
+        with open(plot, errors="replace") as f:
+            head = f.read().splitlines()[:25]
+        warn = [ln for ln in out_txt.splitlines()
+                if len(ln) > 8 and ln[1:3].isalpha() and ln[4] in "EWI" and ln[5:8].isdigit()]
+        raise RuntimeError(
+            f"PLOTFILE 只讀到 {len(xs)} 筆，預期 {n_grid} 筆\n"
+            "---- plot.out 前 25 行 ----\n" + "\n".join(head) +
+            "\n---- aermod.out 錯誤／警告訊息 ----\n" + "\n".join(dict.fromkeys(warn)))
     gx, gy, gc = xs[:n_grid], ys[:n_grid], cs[:n_grid]
     order = np.lexsort((gx, gy))           # 依 y、再依 x 排序成 2D
     X = gx[order].reshape(grid.ny, grid.nx)
