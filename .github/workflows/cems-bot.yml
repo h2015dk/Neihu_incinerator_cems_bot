@@ -55,6 +55,12 @@ jobs:
           key: aermod-bin-none
           restore-keys: aermod-bin-
 
+      - name: AERMAP 地形結果快取
+        uses: actions/cache@v4
+        with:
+          path: aermap_cache
+          key: aermap-v1-${{ hashFiles('config.yaml', 'aermap_run.py') }}
+
       - name: 執行機器人
         env:
           MOENV_API_KEY: ${{ secrets.MOENV_API_KEY }}

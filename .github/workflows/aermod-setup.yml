@@ -44,6 +44,17 @@ jobs:
         continue-on-error: true
         run: python aermod_met.py --test
 
+      - name: AERMAP 地形前處理（受體高程與山丘高度，結果快取）
+        continue-on-error: true
+        run: python aermap_run.py --prepare
+
+      - name: 保存 AERMAP 結果
+        if: hashFiles('aermap_cache/**') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: aermap_cache
+          key: aermap-v1-${{ hashFiles('config.yaml', 'aermap_run.py') }}
+
       - name: 保存執行檔（供之後的每小時監控使用）
         uses: actions/cache/save@v4
         with:
@@ -59,4 +70,5 @@ jobs:
             bin/
             aermod_smoke/
             aermet_test/
+            aermap_test/
           retention-days: 14
