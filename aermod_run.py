@@ -42,6 +42,11 @@ class SfcHour:
     zref: float          # 風速參考高度 m
     temp_k: float        # 氣溫 K
     ztemp: float         # 氣溫量測高度 m
+    ipcode: int = 0      # 降水代碼（0＝無）
+    pamt: float = 0.0    # 降水量 mm
+    rh: float = 70.0     # 相對濕度 %
+    pres: float = 1013.0  # 氣壓 hPa
+    ccvr: int = 5        # 雲量（十分位，0～10）
 
     def line(self) -> str:
         jday = (np.datetime64(f"{self.year:04d}-{self.month:02d}-{self.day:02d}")
@@ -50,7 +55,10 @@ class SfcHour:
                 f"{self.H:6.1f} {self.ustar:6.3f} {self.wstar:6.3f} {self.vptg:6.3f} "
                 f"{self.zic:5.0f} {self.zim:5.0f} {self.L:8.1f} {self.z0:7.4f} {self.bowen:6.2f} "
                 f"{self.albedo:6.2f} {self.ws:7.2f} {self.wd:6.1f} {self.zref:6.1f} "
-                f"{self.temp_k:6.1f} {self.ztemp:6.1f}")
+                f"{self.temp_k:6.1f} {self.ztemp:6.1f} {self.ipcode:5d} {self.pamt:6.2f} "
+                f"{self.rh:5.0f} {self.pres:6.0f} {self.ccvr:5d} NAD-OS NoSubs")
+        # 新版 AERMOD 會讀取氣溫之後的 7 個欄位（降水、濕度、氣壓、雲量、風速調整與替補註記），
+        # 少了會出現 E580「讀到檔案結尾」錯誤
 
 
 @dataclass

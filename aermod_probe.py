@@ -66,6 +66,50 @@ def probe_cwa(ds, key, lat0, lon0, n=4):
         print("讀取失敗：", e)
 
 
+def probe_cwa_ids(key, ids=("466920", "466910", "466940")):
+    """局屬有人站（臺北、鞍部、基隆）：看日照時數等項目是否有值。"""
+    print("\n===== 中央氣象署局屬有人站（臺北 466920、鞍部 466910、基隆 466940）=====")
+    try:
+        js = requests.get("https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001",
+                          params={"Authorization": key, "format": "JSON"}, timeout=60).json()
+        for s in js.get("records", {}).get("Station", []):
+            if s.get("StationId") in ids:
+                print(f"\n--- {s.get('StationName')}（{s.get('StationId')}），觀測時間 "
+                      f"{s.get('ObsTime', {}).get('DateTime')}")
+                for k, v in flat(s.get("WeatherElement", {})).items():
+                    print(f"   {k} = {v}")
+    except Exception as e:  # noqa: BLE001
+        print("讀取失敗：", e)
+
+
+def probe_openmeteo(lat, lon):
+    """全球數值模式資料（Open-Meteo，免金鑰）：雲量、日射量、邊界層高度、高空溫度風場。"""
+    print("\n===== Open-Meteo 數值模式資料（雲量、日射量、邊界層高度、高空剖面）=====")
+    hourly = ("temperature_2m,cloud_cover,shortwave_radiation,boundary_layer_height,"
+              "wind_speed_10m,wind_direction_10m,"
+              "temperature_1000hPa,temperature_925hPa,temperature_850hPa,temperature_700hPa,"
+              "geopotential_height_1000hPa,geopotential_height_925hPa,"
+              "geopotential_height_850hPa,geopotential_height_700hPa")
+    try:
+        r = requests.get("https://api.open-meteo.com/v1/forecast", timeout=60, headers=UA,
+                         params={"latitude": lat, "longitude": lon, "hourly": hourly,
+                                 "past_days": 1, "forecast_days": 1, "timezone": "Asia/Taipei"})
+        print(f"HTTP {r.status_code}")
+        js = r.json()
+        h = js.get("hourly", {})
+        times = h.get("time", [])
+        now = datetime.now().strftime("%Y-%m-%dT%H:00")
+        idx = times.index(now) if now in times else len(times) // 2
+        print(f"模式：{js.get('generationtime_ms')} ms，資料筆數 {len(times)}，顯示 {times[idx] if times else '-'} 前後 3 小時")
+        for i in range(max(0, idx - 1), min(len(times), idx + 2)):
+            print("   " + times[i] + "  " + "  ".join(
+                f"{k}={h[k][i]}" for k in h if k != "time"))
+        missing = [k for k in hourly.split(",") if k not in h or all(v is None for v in h[k])]
+        print("無資料的欄位：", missing or "（無）")
+    except Exception as e:  # noqa: BLE001
+        print("讀取失敗：", e)
+
+
 def probe_igra():
     print("\n===== 板橋探空：NOAA IGRA2 即時檔（data-y2d）=====")
     base = "https://www.ncei.noaa.gov/data/integrated-global-radiosonde-archive/access/data-y2d/"
@@ -124,8 +168,10 @@ def main():
     if key:
         probe_cwa("O-A0003-001", key, fac["stack_lat"], fac["stack_lon"])
         probe_cwa("O-A0001-001", key, fac["stack_lat"], fac["stack_lon"], n=1)
+        probe_cwa_ids(key)
     else:
         print("沒有 CWA_API_KEY，略過氣象署檢查")
+    probe_openmeteo(fac["stack_lat"], fac["stack_lon"])
     probe_igra()
     probe_uwyo()
 
