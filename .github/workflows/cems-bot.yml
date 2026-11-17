@@ -31,7 +31,7 @@ jobs:
           cache: pip
 
       - name: 安裝中文字型（地圖標題、圖例用）
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk libgfortran5
 
       - run: pip install -r requirements.txt
 
@@ -47,6 +47,13 @@ jobs:
         with:
           path: terrain_cache
           key: terrain-tiles-v1
+
+      - name: 還原 AERMOD／AERMET 執行檔（由 aermod-setup 編譯）
+        uses: actions/cache/restore@v4
+        with:
+          path: bin
+          key: aermod-bin-none
+          restore-keys: aermod-bin-
 
       - name: 執行機器人
         env:
