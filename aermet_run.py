@@ -140,7 +140,7 @@ def run(lat: float, lon: float, target: datetime, obs: dict | None = None, zref:
     if not os.path.exists(AERMET_EXE):
         raise FileNotFoundError(f"找不到 AERMET 執行檔：{AERMET_EXE}")
     site = site or {"albedo": 0.18, "bowen": 1.5, "z0": 1.0}
-    h = h or openmeteo.fetch(lat, lon, past_days=2)
+    h = h or openmeteo.fetch(lat, lon, past_days=1)
     work = keep_dir or tempfile.mkdtemp(prefix="aermet_")
     os.makedirs(work, exist_ok=True)
     elev = float(h.get("elevation") or 0)

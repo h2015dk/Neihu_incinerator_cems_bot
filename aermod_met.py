@@ -24,7 +24,7 @@ def get_met(lat: float, lon: float, target: datetime, obs: dict | None = None,
     "note": 說明}。obs＝{"ws","wd","temp_c"} 為實測風與氣溫（三站合成）。"""
     site = site or {"albedo": 0.18, "bowen": 1.5, "z0": 1.0}
     target = target.replace(minute=0, second=0, microsecond=0)
-    h = openmeteo.fetch(lat, lon, past_days=2)
+    h = openmeteo.fetch(lat, lon, past_days=1)
     err = ""
     if prefer == "aermet" and os.path.exists(aermet_run.AERMET_EXE):
         try:

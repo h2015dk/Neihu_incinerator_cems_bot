@@ -7,3 +7,4 @@ bin/
 aermod_smoke/
 build_tmp/
 aermet_test/
+om_cache/
