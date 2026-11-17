@@ -84,7 +84,9 @@ def build(name: str, src_dir: str | None = None) -> str:
             raise RuntimeError(f"{name} 編譯失敗")
     os.makedirs(BIN, exist_ok=True)
     exe = os.path.join(BIN, name)
-    p = subprocess.run(["gfortran", "-O2", "-o", exe, *done], capture_output=True, text=True)
+    # 靜態連結 Fortran 執行期函式庫，讓執行檔在沒有安裝 gfortran 的主機上也能跑
+    p = subprocess.run(["gfortran", "-O2", "-static-libgfortran", "-static-libgcc", "-o", exe, *done],
+                       capture_output=True, text=True)
     if p.returncode != 0:
         print(p.stderr[-2000:])
         raise RuntimeError(f"{name} 連結失敗")

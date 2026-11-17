@@ -165,6 +165,14 @@ STAB_DESC = {"A": "極不穩定", "B": "不穩定", "C": "稍不穩定", "D": "�
 
 def _stab(res: dict) -> str:
     """說明框中的大氣穩定度一行（結尾含換行）。"""
+    if res.get("model") == "AERMOD":
+        zic = f"{res['zic']:.0f} m" if res.get("zic", -999) > 0 else "無（穩定）"
+        state = "對流（不穩定）" if res.get("L", 0) < 0 else "穩定"
+        return (f"擴散模式：EPA AERMOD｜氣象前處理：{res.get('met_method', '')}\n"
+                f"邊界層：{state}，Monin-Obukhov 長度 {res['L']:.0f} m，"
+                f"摩擦速度 {res['ustar']:.2f} m/s，對流混合層 {zic}，機械混合層 {res['zim']:.0f} m\n"
+                f"氣象資料：Open-Meteo 模式值（雲量、日射、高空剖面），風與氣溫為實測\n"
+                f"地形：未納入（AERMOD 以平坦地形計算）\n")
     cls = res.get("cls")
     if not cls:
         return ""
@@ -347,7 +355,12 @@ def draw(res: dict, fac: dict, wind: dict, levels: list[float], title: str, out_
     ax.tick_params(labelsize=8)
     ax.set_title(title, fontsize=11)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.06), ncol=4, fontsize=8, frameon=False)
-    note = "高斯煙流篩選估算（非 AERMOD 正式模擬）；排放濃度為假設值"
+    if res.get("model") == "AERMOD":
+        note = "AERMOD 即時估算（非法規正式模擬）；排放濃度為假設值"
+    else:
+        note = "高斯煙流篩選估算（非 AERMOD 正式模擬）；排放濃度為假設值"
+        if res.get("model_note"):
+            note = res["model_note"] + "\n" + note
     if attrib:
         note += f"　底圖 {attrib}"
     info_txt = (locals().get("wind_info") or "") 

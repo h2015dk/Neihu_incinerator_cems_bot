@@ -352,9 +352,18 @@ def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True, when=None):
                     f_horizontal=tcfg.get("f_horizontal"))
     res["C"] = res["C"] * 1e6
     res["max"] *= 1e6
+    model_name = "篩選估算（高斯煙流模式）"
+    acfg = cfg.get("aermod", {})
+    if acfg.get("enabled", False):
+        try:
+            res = run_aermod(fac, src, wind, when or datetime.now(), rxy, cfg, res)
+            model_name = "即時估算（AERMOD）"
+        except Exception as e:  # noqa: BLE001
+            log.warning("AERMOD 失敗，本次改用高斯煙流模式：%s", str(e)[:300])
+            res["model_note"] = f"AERMOD 失敗，改用高斯煙流模式（{str(e).splitlines()[0][:60]}）"
     os.makedirs(out_dir, exist_ok=True)
     png = os.path.join(out_dir, f"plume_{fac['id']}_{t_ev:%Y%m%d_%H%M}.png")
-    title = f"{fac['name']} 戴奧辛擴散篩選估算\nCEMS 資料時間 {t_ev:%Y-%m-%d %H:%M}"
+    title = f"{fac['name']} 戴奧辛擴散{model_name}\nCEMS 資料時間 {t_ev:%Y-%m-%d %H:%M}"
     mapper.draw(res, fac, wind, cfg["dispersion"]["contour_levels_fg_teq_m3"], title, png,
                 receptors=receptors, map_cfg=cfg.get("map"))
     prev = mapper.make_preview(png, png.replace(".png", "_s.png"))
@@ -362,6 +371,47 @@ def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True, when=None):
         return png, None, None
     img = line_push.upload_image(png, cfg)
     return png, img, (line_push.upload_image(prev, cfg) if img else None)
+
+
+def run_aermod(fac, src, wind, when, rxy, cfg, gauss_res):
+    """以 EPA AERMOD 計算地面濃度（fg I-TEQ/m³）。氣象先用 AERMET，失敗改用 Python 計算。
+    回傳與高斯模式相同結構的 dict，供地圖使用。"""
+    import numpy as np
+    import aermod_met
+    import aermod_run
+    acfg = cfg.get("aermod", {})
+    lat0, lon0 = fac["stack_lat"], fac["stack_lon"]
+    target = when.replace(minute=0, second=0, microsecond=0)
+    obs = {"ws": wind["ws"], "wd": wind["wd"], "temp_c": wind.get("temp_c")}
+    site = acfg.get("site_char", {"albedo": 0.18, "bowen": 1.5, "z0": 1.0})
+    met = aermod_met.get_met(lat0, lon0, target, obs=obs, zref=acfg.get("wind_height_m", 10.0),
+                             site=site, prefer=acfg.get("met", "aermet"))
+    half = acfg.get("grid_half_width_km", 8) * 1000
+    need = max([math.hypot(x, y) for x, y in rxy] + [0]) + 1000
+    half = max(half, need)
+    step = acfg.get("grid_step_m", 100)
+    n = int(2 * half / step) + 1
+    stk = aermod_run.Stack(q_ng_s=src.q_g_s, hs=src.hs, ts_k=src.ts_c + 273.15, vs=src.vs,
+                           d=src.d, base_elev=0.0)
+    grid = aermod_run.Grid(-half, -half, n, n, step, step, discrete=rxy)
+    out = aermod_run.run(stk, met["sfc"], grid, lat0, lon0,
+                         urban_pop=acfg.get("urban_population"), raw=met["raw"])
+    C = out["C"]
+    i = np.unravel_index(np.argmax(C), C.shape)
+    # 從 SFC 取出邊界層參數供地圖說明
+    v = (met["raw"]["sfc_line"] if met["raw"] else met["sfc"].line()).split()
+    res = {"X": out["X"], "Y": out["Y"], "C": C, "max": float(C[i]),
+           "max_xy": (float(out["X"][i]), float(out["Y"][i])),
+           "max_dist_m": float(math.hypot(out["X"][i], out["Y"][i])),
+           "receptors": [{"conc": c, "downwind_m": r["downwind_m"]}
+                         for c, r in zip(out["discrete"], gauss_res["receptors"])],
+           "model": "AERMOD", "met_method": met["method"], "met_note": met["note"],
+           "H": float(v[5]), "ustar": float(v[6]), "zic": float(v[9]), "zim": float(v[10]),
+           "L": float(v[11]), "sun_alt": gauss_res.get("sun_alt"),
+           "Z": None, "stack_base_m": None, "calm": gauss_res.get("calm")}
+    log.info("AERMOD 完成｜氣象：%s｜L=%s m，zic=%s m｜最大 %.1f fg/m³", met["method"], v[11],
+             v[9], res["max"])
+    return res
 
 
 def fake_flue(t, flow_nm3_hr=None, etype="startup"):
