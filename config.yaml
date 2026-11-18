@@ -49,6 +49,12 @@ notify:                          # 通報規則
   forecast_hours: 12             # 往後看幾小時的風向預報
   attach_map: true               # 起爐首則與下風警告附擴散圖
   heartbeat: true                # 每天第一次進入發送時段時，發一則「機器人運作正常」
+  daily_downwind:                # 環興公司在下風且 CO 超過門檻時，模擬並發送（每天一則；起爐期間不判斷）
+    enabled: true
+    co_threshold_ppm: 50         # 任一管道 CO 超過此值才發送，並以超過的管道數模擬；設 0 則只看下風
+    conc_ng_iteq_nm3: 0.1        # 模擬用排放濃度（ng I-TEQ/Nm³）
+    normal_codes: ["N"]          # 視為正常運轉的運轉狀態碼（只計入這些管道）
+    contour_levels_fg_teq_m3: [0.1, 0.5, 1, 2, 5, 10]   # 濃度低，地圖改用較細的色階
 
 forecast:                        # 中央氣象署鄉鎮預報（需 cwa_api_key；沒有就不顯示預報句）
   enabled: true

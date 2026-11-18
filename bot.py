@@ -322,7 +322,7 @@ def step(fac, now, obs, wind, fc, st, cfg):
 
 
 # ======================== 地圖 ========================
-def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True, when=None):
+def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True, when=None, label=None):
     """when：判斷日夜（大氣穩定度）用的時間；正式執行用「現在」，情境測試用情境時間。"""
     dcfg, receptors = cfg["dispersion"], cfg.get("receptors", [])
     lat0, lon0 = fac["stack_lat"], fac["stack_lon"]
@@ -352,6 +352,8 @@ def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True, when=None):
                     f_horizontal=tcfg.get("f_horizontal"))
     res["C"] = res["C"] * 1e6
     res["max"] *= 1e6
+    for r in res.get("receptors", []):  # 敏感點濃度也換成 fg/m³
+        r["conc"] *= 1e6
     model_name = "篩選估算（高斯煙流模式）"
     acfg = cfg.get("aermod", {})
     if acfg.get("enabled", False):
@@ -364,6 +366,9 @@ def render_map(fac, flues, wind, t_ev, cfg, out_dir, upload=True, when=None):
     os.makedirs(out_dir, exist_ok=True)
     png = os.path.join(out_dir, f"plume_{fac['id']}_{t_ev:%Y%m%d_%H%M}.png")
     title = f"{fac['name']} 戴奧辛擴散{model_name}\nCEMS 資料時間 {t_ev:%Y-%m-%d %H:%M}"
+    if label:
+        title = f"{fac['name']} 戴奧辛擴散{model_name}｜{label}\nCEMS 資料時間 {t_ev:%Y-%m-%d %H:%M}"
+    render_map.last_res = res  # 供呼叫端取得敏感點濃度等結果
     mapper.draw(res, fac, wind, cfg["dispersion"]["contour_levels_fg_teq_m3"], title, png,
                 receptors=receptors, map_cfg=cfg.get("map"))
     prev = mapper.make_preview(png, png.replace(".png", "_s.png"))
@@ -472,6 +477,112 @@ def observe(fac, rows, cfg):
     return obs
 
 
+EVENT_CONC_KEY = {"startup": "startup_conc_ng_iteq_nm3", "shutdown": "shutdown_conc_ng_iteq_nm3",
+                  "fault": "fault_conc_ng_iteq_nm3"}
+EVENT_LABEL = {"startup": "起爐", "shutdown": "停爐", "fault": "防制設備異常"}
+
+
+def daily_downwind(fac, obs, wind, cfg, st, now, args, prim_dw, event_msg_sent=False):
+    """下風且 CO 偏高通知（每天一則）。
+    觸發：環興公司位於下風，且任一管道 CO 監測值 > 門檻（預設 50 ppm）。
+    - 起爐進行中：不做此判斷，由起爐事件通報處理（當天仍可在起爐結束後觸發）
+    - 停爐、防制設備異常進行中：改用事件濃度與事件中的管道
+        · 本次執行已發出附圖的事件通報 → 視為當天的此項通知，不再另發
+        · 本次沒有事件通報 → 以事件濃度另發一則
+    - 其他時候：CO 超過門檻的管道有幾根，就用幾根、各以 0.1 ng I-TEQ/Nm³ 模擬
+    - 只在發送時段內"""
+    dcfg = cfg["notify"].get("daily_downwind", {})
+    test = getattr(args, "daily_test", False)
+    if not (dcfg.get("enabled", False) or test) or not wind:
+        return
+    today = now.date().isoformat()
+    st.setdefault("daily_dw", {})
+    if not test and (not in_window(now, cfg) or st["daily_dw"].get(fac["id"]) == today
+                     or not prim_dw):
+        return
+
+    def ev_active(et):
+        return st["events"].get(fac["id"] if et == "startup" else f"{fac['id']}:{et}",
+                                {}).get("active")
+
+    if ev_active("startup") and not test:
+        log.info("%s：起爐進行中，不做下風且 CO 偏高判斷（由起爐事件通報處理）", fac["name"])
+        return
+
+    # CO 條件：任一管道 CO 監測值超過門檻
+    thr = dcfg.get("co_threshold_ppm", 50)
+    co_all = [(f["polno"], f["co"]["value"], f["co"].get("unit") or "ppm") for f in obs["flues"]
+              if f.get("co") and f["co"].get("value") is not None]
+    hit_ids = {p for p, v, _u in co_all if v > thr}
+    if thr and not hit_ids and not test:
+        log.info("%s：環興公司在下風，但沒有管道 CO 超過 %g ppm（%s），不發通知", fac["name"],
+                 thr, "、".join(f"{p} {v:g}" for p, v, _u in co_all) or "無 CO 資料")
+        return
+
+    active = [et for et in ("shutdown", "fault") if ev_active(et)]
+    etype = active[0] if active and not test else None
+    if etype and event_msg_sent:
+        if not args.dry_run:
+            st["daily_dw"][fac["id"]] = today
+        log.info("%s：%s期間的事件通報已附模擬圖，視為今日的下風且 CO 偏高通知", fac["name"],
+                 EVENT_LABEL[etype])
+        return
+
+    if etype:  # 停爐、防制設備異常期間：用事件濃度與事件中的管道
+        flues = [f for f in obs["flues"] if f.get(etype)] or [fake_flue(obs["time"], etype=etype)]
+        conc = cfg["dioxin"].get(EVENT_CONC_KEY[etype], cfg["dioxin"]["startup_conc_ng_iteq_nm3"])
+        cfg2 = cfg                     # 事件濃度沿用原本的色階
+        label = f"{EVENT_LABEL[etype]}期間 {conc:g} ng I-TEQ/Nm³"
+        flue_line = f"{EVENT_LABEL[etype]}中管道：{'、'.join(f['polno'] for f in flues)}"
+        conc_line = f"模擬排放濃度：{conc:g} ng I-TEQ/Nm³（{EVENT_LABEL[etype]}期間假設值）"
+    else:      # CO 超過門檻的管道，每根以 0.1 ng I-TEQ/Nm³ 模擬
+        if thr:
+            flues = [f for f in obs["flues"] if f["polno"] in hit_ids]
+        else:  # 門檻設 0：只看下風，以所有正常運轉管道模擬
+            codes = set(dcfg.get("normal_codes", ["N"]))
+            flues = [f for f in obs["flues"] if set(f["ops"]) & codes]
+        if not flues:  # 測試模式或資料不足時，以 1 根預設管道示意
+            flues = [dict(fake_flue(obs["time"]), ops=["N"])]
+        for f in flues:
+            f.update(startup=False, shutdown=False, fault=False)
+        conc = dcfg.get("conc_ng_iteq_nm3", cfg["dioxin"]["normal_conc_ng_iteq_nm3"])
+        cfg2 = {**cfg, "dioxin": {**cfg["dioxin"], "normal_conc_ng_iteq_nm3": conc},
+                "dispersion": {**cfg["dispersion"], "contour_levels_fg_teq_m3":
+                               dcfg.get("contour_levels_fg_teq_m3", [0.1, 0.5, 1, 2, 5, 10])}}
+        label = f"CO 偏高管道 {len(flues)} 根 × {conc:g} ng I-TEQ/Nm³"
+        flue_line = (f"模擬管道：{'、'.join(f['polno'] for f in flues)}"
+                     f"（CO 超過 {thr:g} ppm，共 {len(flues)} 根）")
+        conc_line = f"模擬排放濃度：每根 {conc:g} ng I-TEQ/Nm³"
+
+    _, img, prev = render_map(fac, flues, wind, obs["time"], cfg2, os.path.join(HERE, "out"),
+                              upload=not args.dry_run, label=label)
+    res = getattr(render_map, "last_res", {}) or {}
+    n = cfg["notify"]
+    names = [n["primary_receptor"]] + n.get("extra_receptors", [])
+    recs = {r["name"]: i for i, r in enumerate(cfg.get("receptors", []))}
+    head = f"🌬 {fac['name']}｜下風且 CO 偏高通知（{now:%H:%M}）"
+    if etype:
+        head += f"｜{EVENT_LABEL[etype]}期間"
+    lines = [("🧪 測試訊息\n" if test else "") + head]
+    for nm in names:
+        s = downwind(fac, receptor_by_name(cfg, nm), wind["wd"], wind["ws"], cfg)
+        lines.append(rec_line(nm, s, "" if nm == n["primary_receptor"] else "（補充）"))
+    if co_all:
+        lines.append(f"CO（{obs['time']:%H:%M}）：" + "、".join(
+            f"{p} {v:g} {u}" + (f"（>{thr:g}）" if v > thr else "") for p, v, u in co_all))
+    lines += [flue_line, conc_line]
+    for nm in names:
+        i = recs.get(nm)
+        if i is not None and i < len(res.get("receptors", [])):
+            lines.append(f"{nm}估算濃度：約 {res['receptors'][i]['conc']:.2f} fg I-TEQ/m³（1 小時）")
+    lines.append(FOOT)
+    line_push.push(cfg, "\n".join(lines), img, prev, dry_run=args.dry_run,
+                   admin=test and not getattr(args, "to_group", False))
+    if not args.dry_run and not test:
+        st["daily_dw"][fac["id"]] = today
+    log.info("%s：已發送下風且 CO 偏高通知（排放濃度 %g）", fac["name"], conc)
+
+
 def run_live(cfg, args):
     facs = facilities_of(cfg)
     by_fac = cems.fetch_all_facilities(cfg, facs)
@@ -511,7 +622,9 @@ def run_live(cfg, args):
         hb_lines.append(f"・{fac['name']}：CEMS 最新 {obs['time']:%m/%d %H:%M}"
                         f"（運轉代碼 {','.join(obs['ops']) or '-'}）"
                         + (f"｜⚠️資料延遲 {age:.0f} 小時" if age > cfg["alert"]["max_data_age_hours"] else ""))
-        if args.force:  # 測試：把現在當成起爐，直接發一則
+        if getattr(args, "daily_test", False):
+            msgs = []
+        elif args.force:  # 測試：把現在當成起爐，直接發一則
             st_tmp = {"events": {}, "pending": {}}
             obs_f = {**obs, "startup": True, "shutdown": False}
             msgs = step(fac, now.replace(hour=12), obs_f, wind, fc, st_tmp, cfg)
@@ -531,16 +644,21 @@ def run_live(cfg, args):
             line_push.push(cfg, text, img, prev, dry_run=args.dry_run,
                            admin=args.force and not args.to_group)
 
+        # 下風且 CO 偏高通知（每天一次）
+        daily_downwind(fac, obs, wind, cfg, st, now, args, dw,
+                       event_msg_sent=any(a for _t, a, _e in msgs))
+
     # 每日運作確認（當天第一次進入發送時段時）
     log.info("發送時段：%s｜今日運作確認：%s", "是" if in_window(now, cfg) else "否",
              "已發送" if st.get("heartbeat_date") == now.date().isoformat() else "未發送")
     if cfg["notify"].get("heartbeat") and in_window(now, cfg) and not args.force \
+            and not getattr(args, "daily_test", False) \
             and st.get("heartbeat_date") != now.date().isoformat():
         line_push.push(cfg, "🤖 監控機器人運作正常\n" + "\n".join(hb_lines), dry_run=args.dry_run,
                        admin=True)
         if not args.dry_run:
             st["heartbeat_date"] = now.date().isoformat()
-    if not args.dry_run and not args.force:
+    if not args.dry_run and not args.force and not getattr(args, "daily_test", False):
         save_state(st_path, st)
 
 
@@ -599,6 +717,8 @@ def main():
     ap.add_argument("--demo", action="store_true", help="跑 tests/ 內所有情境（不連網、不發 LINE）")
     ap.add_argument("--scenario", help="跑指定情境檔")
     ap.add_argument("--diagnose", action="store_true", help="印出 CEMS 資料集實際內容，找正確的管制編號")
+    ap.add_argument("--daily-test", action="store_true",
+                    help="立即發一則「下風且 CO 偏高通知」測試（不論下風與 CO、不記錄狀態）")
     ap.add_argument("--maps", action="store_true", help="情境測試時也產生地圖")
     args = ap.parse_args()
     with open(args.config, encoding="utf-8") as f:
