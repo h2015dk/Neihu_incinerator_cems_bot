@@ -541,7 +541,12 @@ def daily_downwind(fac, obs, wind, cfg, st, now, args, prim_dw, event_msg_sent=F
         else:  # 門檻設 0：只看下風，以所有正常運轉管道模擬
             codes = set(dcfg.get("normal_codes", ["N"]))
             flues = [f for f in obs["flues"] if set(f["ops"]) & codes]
-        if not flues:  # 測試模式或資料不足時，以 1 根預設管道示意
+        test_note = ""
+        if not flues and test:  # 測試模式：實際沒有管道超過門檻時，以 CO 最高的管道示意
+            top = max(co_all, key=lambda c: c[1])[0] if co_all else None
+            flues = [f for f in obs["flues"] if f["polno"] == top][:1]
+            test_note = "（測試：實際未超過門檻，以 CO 最高的管道示意）"
+        if not flues:
             flues = [dict(fake_flue(obs["time"]), ops=["N"])]
         for f in flues:
             f.update(startup=False, shutdown=False, fault=False)
@@ -551,7 +556,7 @@ def daily_downwind(fac, obs, wind, cfg, st, now, args, prim_dw, event_msg_sent=F
                                dcfg.get("contour_levels_fg_teq_m3", [0.1, 0.5, 1, 2, 5, 10])}}
         label = f"CO 偏高管道 {len(flues)} 根 × {conc:g} ng I-TEQ/Nm³"
         flue_line = (f"模擬管道：{'、'.join(f['polno'] for f in flues)}"
-                     f"（CO 超過 {thr:g} ppm，共 {len(flues)} 根）")
+                     + (test_note or f"（CO 超過 {thr:g} ppm，共 {len(flues)} 根）"))
         conc_line = f"模擬排放濃度：每根 {conc:g} ng I-TEQ/Nm³"
 
     _, img, prev = render_map(fac, flues, wind, obs["time"], cfg2, os.path.join(HERE, "out"),
