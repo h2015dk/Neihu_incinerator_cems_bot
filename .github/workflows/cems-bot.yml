@@ -6,7 +6,7 @@ on:
       mode:
         description: "執行模式"
         type: choice
-        options: [normal, dry-run, demo, force, force-group, diagnose]
+        options: [normal, dry-run, demo, force, force-group, diagnose, daily-test]
         default: normal
 
 permissions:
@@ -78,6 +78,7 @@ jobs:
             force)   python bot.py --force ;;
             force-group) python bot.py --force-group ;;
             diagnose) python bot.py --diagnose ;;
+            daily-test) python bot.py --daily-test ;;
             *)       python bot.py ;;
           esac
 
