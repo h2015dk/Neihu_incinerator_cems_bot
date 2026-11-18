@@ -485,11 +485,8 @@ EVENT_LABEL = {"startup": "起爐", "shutdown": "停爐", "fault": "防制設備
 def daily_downwind(fac, obs, wind, cfg, st, now, args, prim_dw, event_msg_sent=False):
     """下風且 CO 偏高通知（每天一則）。
     觸發：環興公司位於下風，且任一管道 CO 監測值 > 門檻（預設 50 ppm）。
-    - 起爐進行中：不做此判斷，由起爐事件通報處理（當天仍可在起爐結束後觸發）
-    - 停爐、防制設備異常進行中：改用事件濃度與事件中的管道
-        · 本次執行已發出附圖的事件通報 → 視為當天的此項通知，不再另發
-        · 本次沒有事件通報 → 以事件濃度另發一則
-    - 其他時候：CO 超過門檻的管道有幾根，就用幾根、各以 0.1 ng I-TEQ/Nm³ 模擬
+    - 起爐、停爐、防制設備異常進行中：不做此判斷（由事件通報處理）；事件結束後才判斷
+    - 模擬：CO 超過門檻的管道有幾根，就用幾根、各以 0.1 ng I-TEQ/Nm³ 模擬
     - 只在發送時段內"""
     dcfg = cfg["notify"].get("daily_downwind", {})
     test = getattr(args, "daily_test", False)
@@ -505,8 +502,10 @@ def daily_downwind(fac, obs, wind, cfg, st, now, args, prim_dw, event_msg_sent=F
         return st["events"].get(fac["id"] if et == "startup" else f"{fac['id']}:{et}",
                                 {}).get("active")
 
-    if ev_active("startup") and not test:
-        log.info("%s：起爐進行中，不做下風且 CO 偏高判斷（由起爐事件通報處理）", fac["name"])
+    running = [EVENT_LABEL[et] for et in ("startup", "shutdown", "fault") if ev_active(et)]
+    if running and not test:
+        log.info("%s：%s進行中，不做下風且 CO 偏高判斷（事件結束後才判斷）", fac["name"],
+                 "、".join(running))
         return
 
     # CO 條件：任一管道 CO 監測值超過門檻
@@ -519,45 +518,30 @@ def daily_downwind(fac, obs, wind, cfg, st, now, args, prim_dw, event_msg_sent=F
                  thr, "、".join(f"{p} {v:g}" for p, v, _u in co_all) or "無 CO 資料")
         return
 
-    active = [et for et in ("shutdown", "fault") if ev_active(et)]
-    etype = active[0] if active and not test else None
-    if etype and event_msg_sent:
-        if not args.dry_run:
-            st["daily_dw"][fac["id"]] = today
-        log.info("%s：%s期間的事件通報已附模擬圖，視為今日的下風且 CO 偏高通知", fac["name"],
-                 EVENT_LABEL[etype])
-        return
-
-    if etype:  # 停爐、防制設備異常期間：用事件濃度與事件中的管道
-        flues = [f for f in obs["flues"] if f.get(etype)] or [fake_flue(obs["time"], etype=etype)]
-        conc = cfg["dioxin"].get(EVENT_CONC_KEY[etype], cfg["dioxin"]["startup_conc_ng_iteq_nm3"])
-        cfg2 = cfg                     # 事件濃度沿用原本的色階
-        label = f"{EVENT_LABEL[etype]}期間 {conc:g} ng I-TEQ/Nm³"
-        flue_line = f"{EVENT_LABEL[etype]}中管道：{'、'.join(f['polno'] for f in flues)}"
-        conc_line = f"模擬排放濃度：{conc:g} ng I-TEQ/Nm³（{EVENT_LABEL[etype]}期間假設值）"
-    else:      # CO 超過門檻的管道，每根以 0.1 ng I-TEQ/Nm³ 模擬
-        if thr:
-            flues = [f for f in obs["flues"] if f["polno"] in hit_ids]
-        else:  # 門檻設 0：只看下風，以所有正常運轉管道模擬
-            codes = set(dcfg.get("normal_codes", ["N"]))
-            flues = [f for f in obs["flues"] if set(f["ops"]) & codes]
-        test_note = ""
-        if not flues and test:  # 測試模式：實際沒有管道超過門檻時，以 CO 最高的管道示意
-            top = max(co_all, key=lambda c: c[1])[0] if co_all else None
-            flues = [f for f in obs["flues"] if f["polno"] == top][:1]
-            test_note = "（測試：實際未超過門檻，以 CO 最高的管道示意）"
-        if not flues:
-            flues = [dict(fake_flue(obs["time"]), ops=["N"])]
-        for f in flues:
-            f.update(startup=False, shutdown=False, fault=False)
-        conc = dcfg.get("conc_ng_iteq_nm3", cfg["dioxin"]["normal_conc_ng_iteq_nm3"])
-        cfg2 = {**cfg, "dioxin": {**cfg["dioxin"], "normal_conc_ng_iteq_nm3": conc},
-                "dispersion": {**cfg["dispersion"], "contour_levels_fg_teq_m3":
-                               dcfg.get("contour_levels_fg_teq_m3", [0.1, 0.5, 1, 2, 5, 10])}}
-        label = f"CO 偏高管道 {len(flues)} 根 × {conc:g} ng I-TEQ/Nm³"
-        flue_line = (f"模擬管道：{'、'.join(f['polno'] for f in flues)}"
-                     + (test_note or f"（CO 超過 {thr:g} ppm，共 {len(flues)} 根）"))
-        conc_line = f"模擬排放濃度：每根 {conc:g} ng I-TEQ/Nm³"
+    etype = None
+    # CO 超過門檻的管道，每根以 0.1 ng I-TEQ/Nm³ 模擬
+    if thr:
+        flues = [f for f in obs["flues"] if f["polno"] in hit_ids]
+    else:  # 門檻設 0：只看下風，以所有正常運轉管道模擬
+        codes = set(dcfg.get("normal_codes", ["N"]))
+        flues = [f for f in obs["flues"] if set(f["ops"]) & codes]
+    test_note = ""
+    if not flues and test:  # 測試模式：實際沒有管道超過門檻時，以 CO 最高的管道示意
+        top = max(co_all, key=lambda c: c[1])[0] if co_all else None
+        flues = [f for f in obs["flues"] if f["polno"] == top][:1]
+        test_note = "（測試：實際未超過門檻，以 CO 最高的管道示意）"
+    if not flues:
+        flues = [dict(fake_flue(obs["time"]), ops=["N"])]
+    for f in flues:
+        f.update(startup=False, shutdown=False, fault=False)
+    conc = dcfg.get("conc_ng_iteq_nm3", cfg["dioxin"]["normal_conc_ng_iteq_nm3"])
+    cfg2 = {**cfg, "dioxin": {**cfg["dioxin"], "normal_conc_ng_iteq_nm3": conc},
+            "dispersion": {**cfg["dispersion"], "contour_levels_fg_teq_m3":
+                           dcfg.get("contour_levels_fg_teq_m3", [0.1, 0.5, 1, 2, 5, 10])}}
+    label = f"CO 偏高管道 {len(flues)} 根 × {conc:g} ng I-TEQ/Nm³"
+    flue_line = (f"模擬管道：{'、'.join(f['polno'] for f in flues)}"
+                 + (test_note or f"（CO 超過 {thr:g} ppm，共 {len(flues)} 根）"))
+    conc_line = f"模擬排放濃度：每根 {conc:g} ng I-TEQ/Nm³"
 
     _, img, prev = render_map(fac, flues, wind, obs["time"], cfg2, os.path.join(HERE, "out"),
                               upload=not args.dry_run, label=label)
